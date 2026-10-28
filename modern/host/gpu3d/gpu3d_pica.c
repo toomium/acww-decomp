@@ -306,22 +306,24 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
     GSPGPU_InvalidateDataCache(sColorOut, W * H * 4);
     GSPGPU_InvalidateDataCache(sDepthOut, W * H * 4);
 
-    // into the rasteriser's formats: the colour back from premultiplied, 6 bits; alpha 5 bits; depth 24 bits
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++) {
-            int i = y * W + x, o = i;
-            u32 px = sColorOut[o], a = px & 0xff;
-            u32 c6[3] = {cr, cg, cb};
-            if (a)
-                for (int c = 0; c < 3; c++) {
-                    u32 v = ((px >> (24 - 8 * c) & 0xff) * 63 + a / 2) / a;
-                    c6[c] = v > 63 ? 63 : v;
-                }
-            color[i] = c6[0] | c6[1] << 8 | c6[2] << 16 | ((a * 31 + 127) / 255) << 24;
-            u32 d = sDepthOut[o];
-            depth[i] = d & 0xffffff;
-            flags[i] = (u8)(d >> 31);
+    // into the rasteriser's formats: the colour back from premultiplied, 6 bits; alpha 5 bits; depth 24 bits. (A
+    // reciprocal per alpha: the ARM11 has no divide instruction.)
+    static u32 recip[256], alpha5[256];
+    if (!recip[1])
+        for (u32 a = 1; a < 256; a++) recip[a] = ((63u << 16) + a / 2) / a, alpha5[a] = (a * 31 + 127) / 255;
+    u32 clear = cr | cg << 8 | cb << 16;
+    for (int i = 0; i < W * H; i++) {
+        u32 px = sColorOut[i], a = px & 0xff, c = clear;
+        if (a) {
+            u32 k = recip[a], r = ((px >> 24) * k + 0x8000) >> 16, g = ((px >> 16 & 0xff) * k + 0x8000) >> 16,
+                b = ((px >> 8 & 0xff) * k + 0x8000) >> 16;
+            c = (r > 63 ? 63 : r) | (g > 63 ? 63 : g) << 8 | (b > 63 ? 63 : b) << 16;
         }
+        color[i] = c | alpha5[a] << 24;
+        u32 d = sDepthOut[i];
+        depth[i] = d & 0xffffff;
+        flags[i] = (u8)(d >> 31);
+    }
 }
 
 #endif
