@@ -18,8 +18,8 @@
 #ifndef __3DS__
 
 int g3p_init(void) { return 0; }
-void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, u32 *color, u32 *depth, u8 *flags) {
-    (void)r, (void)img, (void)pal, (void)color, (void)depth, (void)flags;
+void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags) {
+    (void)r, (void)img, (void)pal, (void)texChanged, (void)color, (void)depth, (void)flags;
 }
 
 #else
@@ -217,10 +217,12 @@ static void apply(const State *s, const G3RenderState *r) {
 
 static u32 rgb5_to_6(u32 c) { return c ? c * 2 + 1 : 0; }
 
-void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, u32 *color, u32 *depth, u8 *flags) {
+void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags) {
     sFrame++;
-    track(img, sImgCopy, sImgVer, IMG_SIZE);
-    track(pal, sPalCopy, sPalVer, PAL_SIZE);
+    if (texChanged) {
+        track(img, sImgCopy, sImgVer, IMG_SIZE);
+        track(pal, sPalCopy, sPalVer, PAL_SIZE);
+    }
     u32 cc = r->clearColor, ca = r->clearAttrHi & 31;
     u32 cr = rgb5_to_6(cc & 31), cg = rgb5_to_6(cc >> 5 & 31), cb = rgb5_to_6(cc >> 10 & 31);
     u32 a8 = ca * 255 / 31, cd = (u32)(r->clearDepth & 0x7fff) * 0x200 + ((r->clearDepth & 0x7fff) == 0x7fff ? 0x1ff : 0);

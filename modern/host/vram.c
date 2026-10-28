@@ -110,7 +110,12 @@ void host_vram_flush(void) {
         if (sGran[g].bank >= 0) memcpy(sBanks + sOffset[sGran[g].bank] + sGran[g].off, sGran[g].win, GRANULE);
 }
 
+// bumped at every remap: the banks the CPU can't see (textures, texture palettes...) change only then
+static u32 sGeneration;
+u32 host_vram_generation(void) { return sGeneration; }
+
 static void remap(void) {
+    sGeneration++;
     host_vram_flush();
     for (int g = 0; g < NGRAN; g++) sGran[g].bank = -1;
     for (int i = 0; i < 9; i++) {

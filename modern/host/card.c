@@ -16,20 +16,31 @@ static u8 sHeader[0x200];
 static const char *sRomPath;  // (host_rom_path: pxi7.c's default save file)
 static u32 sAddr, sLeft, sIsData;
 
-// The image read from the file as the game asks for it, through a cache of one block: ACWW's is 32 MB, too much to
-// hold on the 3DS beside the program (docs/3ds.md D4); the game reads its files in runs of 512-byte pages.
-enum { BLOCK = 0x8000 };
-static u8 sBlock[BLOCK];
-static u32 sBlockAddr = ~0u;
+// The image read from the file as the game asks for it, through a cache of 32 KB blocks (1 MB, the least recently
+// used one replaced): ACWW's is 32 MB, too much to hold on the 3DS beside the program (docs/3ds.md D4), and every
+// read of the 3DS's SD card is slow; the game reads its files in runs of 512-byte pages, often from a few at a time.
+enum { BLOCK = 0x8000, BLOCKS = 32 };
+static u8 sBlock[BLOCKS][BLOCK];
+static u32 sBlockAddr[BLOCKS], sBlockUsed[BLOCKS], sUse;
+static int sLast;
 static u8 rom_byte(u32 a) {
     if (a >= sRomSize) return 0xff;
-    if ((a & ~(u32)(BLOCK - 1)) != sBlockAddr) {
-        sBlockAddr = a & ~(u32)(BLOCK - 1);
-        memset(sBlock, 0xff, BLOCK);
-        if (fseek(sRom, (long)sBlockAddr, SEEK_SET) != 0 || (fread(sBlock, 1, BLOCK, sRom) == 0 && ferror(sRom)))
+    u32 addr = a & ~(u32)(BLOCK - 1);
+    if (sBlockAddr[sLast] != addr) {
+        int b = 0;
+        for (int i = 0; i < BLOCKS; i++) {
+            if (sBlockAddr[i] == addr) { b = i; goto found; }
+            if (sBlockUsed[i] < sBlockUsed[b]) b = i;
+        }
+        sBlockAddr[b] = addr;
+        memset(sBlock[b], 0xff, BLOCK);
+        if (fseek(sRom, (long)addr, SEEK_SET) != 0 || (fread(sBlock[b], 1, BLOCK, sRom) == 0 && ferror(sRom)))
             host_fatal("the ROM file can't be read");
+    found:
+        sLast = b;
     }
-    return sBlock[a & (BLOCK - 1)];
+    sBlockUsed[sLast] = ++sUse;
+    return sBlock[sLast][a & (BLOCK - 1)];
 }
 
 void card_init(const char *path) {
@@ -40,6 +51,7 @@ void card_init(const char *path) {
     long n = ftell(sRom);
     if (n < (long)sizeof sHeader) host_fatal("the ROM file is too small");
     sRomSize = (u32)n;
+    for (int i = 0; i < BLOCKS; i++) sBlockAddr[i] = ~0u;  // (none held)
     for (u32 i = 0; i < sizeof sHeader; i++) sHeader[i] = rom_byte(i);
 }
 

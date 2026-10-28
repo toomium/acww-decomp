@@ -39,6 +39,9 @@ uint32_t gpu3d_read32(uint32_t addr);
 // commands that waited for it run. `bank`: VRAM banks A-I (the texture image slots are banks A-D, the palette
 // slots E-G as VRAMCNT maps them)
 void gpu3d_frame(const uint8_t *const bank[9]);
+// the VRAM's mapping generation (vram.c host_vram_generation): while it stays the same, the texture image and
+// palette slots (banks the CPU can't see) keep their contents, and the rasteriser doesn't gather them again
+void gpu3d_vram_generation(uint32_t generation);
 // the picture the frame shows: 192 lines of 256 pixels, red bits 0-5, green 8-13, blue 16-21, alpha bits 24-28
 // (0-31; 0: no pixel), before BG0HOFS's scroll (the 2D renderer's BG0 input)
 const uint32_t *gpu3d_lines(void);

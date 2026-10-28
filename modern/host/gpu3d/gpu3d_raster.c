@@ -593,11 +593,11 @@ void g3_render(void) {
     }
     if (timing) t0 = host_plat_time_ns();
     sR = &gG3Render;
-    g3_tex_setup();
+    int texChanged = g3_tex_setup();
     if (sWgpu)  // (the GPU's rasteriser: gpu3d_wgpu.c)
         g3w_render(sR, sImgFlat, sPalFlat, sWgpuReadback ? sColor : NULL);
     else if (sPica) {  // (the 3DS GPU's: gpu3d_pica.c; no anti-aliasing pass, it has no coverage)
-        g3p_render(sR, sImgFlat, sPalFlat, sColor, sDepth, sFlags);
+        g3p_render(sR, sImgFlat, sPalFlat, texChanged, sColor, sDepth, sFlags);
         fog_pass();
     } else {
         clear_buffers();

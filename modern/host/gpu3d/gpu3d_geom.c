@@ -55,6 +55,8 @@ static int sNumVerts, sNumPolys, sNumOpaque;
 static int sRamOverflow;
 G3RenderState gG3Render;
 const uint8_t *const *gG3Banks;
+u32 gG3VramGeneration = ~0u;
+void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
 
 // ---- feature census
 static u64 sFeatureFrame[F_COUNT];

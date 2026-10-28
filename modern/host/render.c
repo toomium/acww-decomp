@@ -524,6 +524,8 @@ int render_compare_3d(const char *kind, u64 label) {
 static void gpu3d_run_frame(void) {
     const u8 *banks[9];
     for (int i = 0; i < 9; i++) banks[i] = host_vram_bank(i);
+    u32 host_vram_generation(void);
+    gpu3d_vram_generation(host_vram_generation());
     gpu3d_frame(banks);
 }
 

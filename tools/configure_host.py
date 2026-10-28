@@ -288,7 +288,8 @@ elif N3DS:
     # structures with the game, so it takes the game's 32-bit enums too (arm-none-eabi's default is the smallest
     # size), except the files that use libctru's structures (N3DS_NATIVE: the library's own default); the linker's
     # notes about the mix are expected
-    HOST_FLAGS = (f"{M_FLAG} -O1 -g -fno-omit-frame-pointer -Wall -std=gnu11 -DHOST -Iinclude -D__3DS__ "
+    # (-O2: the 3DS's CPU is slow, the runtime's loops are much of its time)
+    HOST_FLAGS = (f"{M_FLAG} -O2 -g -fno-omit-frame-pointer -Wall -std=gnu11 -DHOST -Iinclude -D__3DS__ "
                   f"-I{DKP}/libctru/include -DHOST_DEBUG_POSIX=0 -fno-short-enums" + FRONTEND_FLAG)
     LINK_FLAGS = f"{M_FLAG} -specs=3dsx.specs -L{DKP}/libctru/lib -Wl,--no-enum-size-warning,--no-wchar-size-warning"
     HOST_CXX_FLAGS = f"{M_FLAG} -O1 -g -std=c++17 -DHOST"
