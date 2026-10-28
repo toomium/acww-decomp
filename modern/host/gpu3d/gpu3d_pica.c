@@ -61,6 +61,7 @@ typedef struct {
     u32 key, pal;  // texparam without the wrap bits, texpal (palette formats)
     u32 ver;       // the newest VRAM piece version under it when it was decoded
     u32 used;      // the frame it was last used in
+    u32 checked;   // sVer when its version was last compared (unchanged since: still valid)
     int live;
     C3D_Tex tex;
 } TexEntry;
@@ -117,6 +118,13 @@ static void tile(const u32 *src, u32 *dst, int w, int h) {
 
 static C3D_Tex *texture(u32 tp, u32 tpal) {
     u32 key = tp & 0x3ff0ffff, pal = (tp >> 26 & 7) == 7 ? 0 : tpal & 0x1fff;
+    // (the polygons in a row mostly share a texture, and VRAM rarely changes: the last one found, no version
+    // compared while no VRAM piece has changed since)
+    static TexEntry *last;
+    if (last && last->live && last->key == key && last->pal == pal && last->checked == sVer) {
+        last->used = sFrame;
+        return &last->tex;
+    }
     u32 ver = texture_version(tp, tpal);
     TexEntry *e = 0, *lru = 0;
     for (int i = 0; i < NTEX; i++) {
@@ -125,7 +133,8 @@ static C3D_Tex *texture(u32 tp, u32 tpal) {
         if (!lru || !t->live || (lru->live && t->used < lru->used)) lru = t;
     }
     if (e && e->ver >= ver) {
-        e->used = sFrame;
+        e->used = sFrame, e->checked = sVer;
+        last = e;
         return &e->tex;
     }
     int w = 8 << (tp >> 20 & 7), h = 8 << (tp >> 23 & 7);
@@ -143,7 +152,8 @@ static C3D_Tex *texture(u32 tp, u32 tpal) {
     tile(rgba, e->tex.data, w, h);
     free(rgba);
     C3D_TexFlush(&e->tex);
-    e->ver = ver, e->used = sFrame;
+    e->ver = ver, e->used = sFrame, e->checked = sVer;
+    last = e;
     return &e->tex;
 }
 
