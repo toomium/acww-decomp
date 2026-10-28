@@ -46,6 +46,7 @@
 #include "gpu3d/gpu3d.h"
 #include "host_mem.h"
 #include "plat.h"
+#include "pica_display.h"
 #include "render.h"
 #include "wgpu_display.h"
 
@@ -75,6 +76,7 @@ static int sGpu3d;        // the own 3D engine runs (sOwn3d or sCompare)
 static int sMelon;        // melonDS runs
 static int sCompare;
 static int sGpuDisplay;   // the screens composited by the GPU (wgpu_display.c)
+static int sPica;         // the screens composited and shown by the 3DS's GPU (pica_display.c)
 static int sScale3d = 2;  // ACWW_SCALE3D
 static int sGpu2dMode;    // ACWW_GPU2D: 1 the 2D pictures drawn by the GPU, 2 checked against the CPU's
 static u64 sGpu2dChecked, sGpu2dDiffering;
@@ -120,9 +122,14 @@ void render_init(void) {
         if (sGpuDisplay && getenv("ACWW_GPU2D_SELFTEST")) sGpu2dMode = 2;
     }
 #ifdef __3DS__
-    // the 3DS: the polygons drawn by its GPU (gpu3d/gpu3d_pica.c), unless ACWW_RENDERER3D=own
+    // the 3DS: the polygons drawn by its GPU (gpu3d/gpu3d_pica.c), unless ACWW_RENDERER3D=own; the screens
+    // composited by it (pica_display.c), unless ACWW_COMPOSITE=cpu
     if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !gpu3d_use_pica())
         fprintf(stderr, "render: the 3DS GPU's renderer couldn't start: own\n");
+    if (sOwn && !sCompare && !env_is("ACWW_COMPOSITE", "cpu")) {
+        sPica = pdisp_init();
+        if (!sPica) fprintf(stderr, "render: the 3DS GPU's compositing couldn't start: the CPU's\n");
+    }
 #endif
     if (getenv("ACWW_RENDER_COMPARE_MAX")) sCompareMax = strtol(getenv("ACWW_RENDER_COMPARE_MAX"), 0, 10);
     if (getenv("ACWW_RENDER_SELFTEST") || getenv("ACWW_RENDER_SELFTEST3D")) sCompare = sCompare ? sCompare : 1;
@@ -626,6 +633,7 @@ void render_frame(void) {
         in.hblankContext = 0;
         in.defer3d = sGpuDisplay;
         in.gpu = sGpu2dMode;
+        in.layers = sPica ? pdisp_layers() : NULL;
         gpu2d_render_frame(&in);
         if (sGpuDisplay) {
             const uint32_t *deferred[2] = {gpu2d_deferred(0), gpu2d_deferred(1)};
@@ -637,6 +645,7 @@ void render_frame(void) {
     }
     u64 t1 = host_plat_time_ns();
     if (sGpu3d) gpu3d_run_frame();
+    if (sPica) pdisp_frame(sOwn3d ? lines3d : NULL);  // (the 3D picture the 2D renderer would have shown)
     render_timing(t0, t1, host_plat_time_ns());
     if (sCompare && !sSelftest) {
         render_compare("frame", host_frame());
@@ -646,9 +655,11 @@ void render_frame(void) {
 
 const uint32_t *render_screen(int screen) {
     if (sGpuDisplay) return wdisp_screens() + 256 * 192 * (screen & 1);
+    if (sPica) return pdisp_screen(screen);
     return sOwn ? gpu2d_screen(screen) : melon_screen(screen);
 }
 int render_on_gpu(void) { return sGpuDisplay; }
+int render_presenting(void) { return wdisp_presenting() || sPica; }
 
 void render_exit_report(void) {
     if (sCompare) {

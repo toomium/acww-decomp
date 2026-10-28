@@ -46,7 +46,7 @@ void frontend_frame(void) {
     u16 xy = 0x2c00;
     if (sShm) {
         // (not when the GPU shows them itself: they would be read back from it)
-        if (!wdisp_presenting())
+        if (!render_presenting())
             for (int s = 0; s < 2; s++) memcpy(sShm->pixels + s * 256 * 192, render_screen(s), 256 * 192 * 4);
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
         sShm->frame++;

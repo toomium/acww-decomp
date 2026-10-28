@@ -16,6 +16,7 @@ static u32 sScreen[2][SCREEN_W * SCREEN_H];
 static u32 sFrame;        // frames rendered
 static int sDefer3d;      // the 3D layer left to the caller (Gpu2dFrameInput.defer3d)
 static int sGpu;          // Gpu2dFrameInput.gpu: 1 record the frame for a GPU, 2 and draw it here too
+static Gpu2dLayers *sLayers;  // Gpu2dFrameInput.layers
 static Gpu2dGpuFrame sGpuFrame;
 static u8 sPalettes[GPU2D_MAX_VERSIONS][0x800], sOams[GPU2D_MAX_VERSIONS][0x800];
 static u32 sDeferred[2][SCREEN_W * SCREEN_H * 2], sDeferredLines[2][SCREEN_H];  // (gpu2d_deferred)
@@ -471,8 +472,64 @@ static void compose_line(Engine *e, int line, const u32 *line3d, u32 *dst) {
 }
 
 // one line of an engine's picture: the display mode (DISPCNT bits 16-17), then master brightness
+// ---- the layers to the caller (Gpu2dFrameInput.layers): a line's BG and OBJ pixels in the 3DS GPU's formats, the
+// windows' layer masks applied, and the line's compositing state
+static u16 sTo5551[0x8000];
+static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
+    u32 dispcnt = reg32(e, REG_DISPCNT);
+    if (!sTo5551[1])
+        for (u32 c = 0; c < 0x8000; c++) sTo5551[c] = (u16)((c & 31) << 11 | (c >> 5 & 31) << 6 | (c >> 10 & 31) << 1 | 1);
+    u8 mask[SCREEN_W];
+    window_line(e, &e->obj, mask);
+    obj_mosaic_x(e, &e->obj);
+    int is3d = e->num == 0 && (dispcnt & 8);
+    if (is3d && (dispcnt & 0x100)) gpu2d_feature(e, F_3D);
+    for (int n = 0; n < 4; n++) {
+        ls->prio[n] = reg16(e, REG_BGCNT + 2 * (u32)n) & 3;
+        if (!(dispcnt & 0x100u << n) || (n == 0 && is3d)) continue;
+        u16 *d = sLayers->bg[e->num][n] + line * SCREEN_W;
+        const u16 *s = e->bg[n];
+        for (int x = 0; x < SCREEN_W; x++)
+            d[x] = (s[x] & PIX_OPAQUE) && (mask[x] >> n & 1) ? sTo5551[s[x] & 0x7fff] : 0;
+    }
+    if (dispcnt & 0x1000) {
+        u32 *d = sLayers->obj[e->num] + line * SCREEN_W;
+        const ObjLine *obj = &e->obj;
+        for (int x = 0; x < SCREEN_W; x++) {
+            if (!obj->source[x] || !(mask[x] & 0x10)) { d[x] = 0; continue; }
+            u16 c = obj_color(e, dispcnt, obj, x);
+            u32 r = c & 31, g = c >> 5 & 31, b = c >> 10 & 31;
+            d[x] = (r << 3 | r >> 2) << 24 | (g << 3 | g >> 2) << 16 | (b << 3 | b >> 2) << 8 | (obj->prio[x] + 1u) * 32;
+        }
+    }
+    if (dispcnt & 0xe000) {
+        u16 *d = sLayers->fx[e->num] + line * SCREEN_W;
+        for (int x = 0; x < SCREEN_W; x++) d[x] = mask[x] & 0x20 ? 0 : 1;
+    }
+}
+
 static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
     u32 dispcnt = reg32(e, REG_DISPCNT), *dst = e->out + line * SCREEN_W;
+    if (sLayers) {  // (the caller composites: the layers and the state)
+        Gpu2dLineState *ls = &sLayers->line[e->num][line];
+        s32 hofs3d = reg16(e, REG_BGHOFS) & 0x1ff;
+        ls->dispcnt = dispcnt;
+        ls->bldcnt = reg16(e, REG_BLDCNT), ls->bldalpha = reg16(e, REG_BLDALPHA), ls->bldy = reg16(e, REG_BLDY);
+        ls->backdrop = pal16(e->palette, 0) & 0x7fff;
+        ls->masterBright = reg16(e, REG_MASTER_BRIGHT);
+        ls->hofs3d = (int16_t)(hofs3d & 0x100 ? hofs3d - 0x200 : hofs3d);
+        u32 mode = dispcnt >> 16 & (e->num ? 1 : 3);
+        ls->white = (e->num == 1 && !(sPowCnt & 0x200)) || (dispcnt & 0x80) || mode != 1;
+        if (mode == 0) gpu2d_feature(e, F_DISPLAY_OFF);
+        if (mode >= 2) gpu2d_feature(e, mode == 2 ? F_DISPLAY_VRAM : F_DISPLAY_FIFO);
+        if (dispcnt & 0x80) gpu2d_feature(e, F_FORCED_BLANK);
+        if (!(e->num == 1 && !(sPowCnt & 0x200)) && !(dispcnt & 0x80)) {
+            for (int n = 0; n < 4; n++) gpu2d_render_bg_line(e, n, line);
+            layers_line(e, line, ls);
+        }
+        obj_mosaic_y(e, line);
+        return;
+    }
     if (sGpu == 1) {  // (drawn by the GPU: only the state that goes from line to line, as below)
         e->lineInfo[line] = reg16(e, REG_MASTER_BRIGHT) | (u32)(reg16(e, REG_BGHOFS) & 0x1ff) << 16;
         if (e->num == 1 && !(sPowCnt & 0x200)) return;
@@ -601,6 +658,7 @@ const Gpu2dGpuFrame *gpu2d_gpu_frame(void) { return &sGpuFrame; }
 void gpu2d_render_frame(const Gpu2dFrameInput *in) {
     sGpu = in->gpu;
     sDefer3d = in->defer3d || sGpu;
+    sLayers = in->layers;
     map_vram(in);
     if (sGpu) {
         gpu_tables(in);
@@ -662,6 +720,11 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
         e->haveNextLine0 = 1;
     }
     // to the screens: engine A on the top screen if POWCNT1 bit 15 is set
+    if (sLayers) {
+        sLayers->topEngine = (sPowCnt & 0x8000) ? 0 : 1;
+        sFrame++;
+        return;
+    }
     if (sGpu) sGpuFrame.tables[0][G2T_SCREEN_A] = (sPowCnt & 0x8000) ? 0 : 1;
     for (int n = 0; n < 2; n++) {
         int screen = (sPowCnt & 0x8000) ? n : 1 - n;

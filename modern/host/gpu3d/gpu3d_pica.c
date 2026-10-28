@@ -227,7 +227,7 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
     u32 cr = rgb5_to_6(cc & 31), cg = rgb5_to_6(cc >> 5 & 31), cb = rgb5_to_6(cc >> 10 & 31);
     u32 a8 = ca * 255 / 31, cd = (u32)(r->clearDepth & 0x7fff) * 0x200 + ((r->clearDepth & 0x7fff) == 0x7fff ? 0x1ff : 0);
 
-    C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+    C3D_FrameBegin(0);  // (not paced to the display: hw.c paces the frames)
     // (the colour premultiplied as the polygons')
     C3D_RenderTargetClear(sTarget, C3D_CLEAR_ALL,
                           (cr * 255 / 63 * a8 / 255) << 24 | (cg * 255 / 63 * a8 / 255) << 16 |

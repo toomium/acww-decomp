@@ -24,6 +24,26 @@
 extern "C" {
 #endif
 
+// Gpu2dFrameInput.layers (the 3DS: its GPU composites, pica_display.c): instead of compositing, each line's layers
+// as pixels in the 3DS GPU's formats (256 x 192 each, row by row), with the windows' layer masks applied, and each
+// line's compositing state. Pixels of a layer the line doesn't show (DISPCNT) are left as they were.
+typedef struct Gpu2dLineState {
+    uint32_t dispcnt;        // DISPCNT (bits 3 3D, 8-12 BG0-3 and OBJ shown, 13-15 windows)
+    uint16_t bldcnt, bldalpha, bldy, backdrop;  // BLDCNT, BLDALPHA, BLDY; palette colour 0 (BGR555)
+    uint16_t masterBright;   // MASTER_BRIGHT
+    int16_t hofs3d;          // BG0HOFS (the 3D layer's scroll), -256 to 255
+    uint8_t prio[4];         // BG0-3's priority
+    uint8_t white;           // 1: the line is white (display off, forced blank, engine off; VRAM and main memory
+                             // display, which the game doesn't use, too)
+} Gpu2dLineState;
+typedef struct Gpu2dLayers {
+    uint16_t *bg[2][4];      // per engine BG0-3: RGBA5551 (r << 11 | g << 6 | b << 1 | 1), 0 transparent
+    uint32_t *obj[2];        // OBJs: RGBA8 (r << 24 | g << 16 | b << 8 | (priority + 1) * 32), 0 transparent
+    uint16_t *fx[2];         // 1 where the windows disable the colour effects (WININ / WINOUT bit 5), else 0
+    Gpu2dLineState line[2][192];
+    int topEngine;           // the engine on the top screen (POWCNT1 bit 15)
+} Gpu2dLayers;
+
 typedef struct Gpu2dFrameInput {
     const uint8_t *bank[9];   // VRAM banks A-I (128, 128, 128, 128, 64, 16, 16, 32, 16 KB)
     const uint8_t *palette;   // 0x800 bytes: engine A BG, A OBJ, B BG, B OBJ (0x200 each)
@@ -40,6 +60,8 @@ typedef struct Gpu2dFrameInput {
     // the pictures drawn by a GPU (gpu2d_gpu_frame; implies defer3d): 1 the frame's inputs recorded for it and no
     // pixels drawn here, 2 both (to check the GPU's against these)
     int gpu;
+    // the layers to the caller instead of the pictures (gpu2d_screen then stale); NULL: none
+    Gpu2dLayers *layers;
 } Gpu2dFrameInput;
 
 void gpu2d_reset(void);

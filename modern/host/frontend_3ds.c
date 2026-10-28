@@ -11,6 +11,9 @@
 #include <3ds.h>
 
 #include "frontend.h"
+#include "pica_display.h"
+
+int render_presenting(void);  // (render.h: not includable beside libctru, whose u32 differs from host.h's)
 
 static AcwwShm sShm;
 
@@ -73,6 +76,7 @@ static void show(gfxScreen_t screen, const uint32_t *px) {
 AcwwShm *frontend_backend_open(const char *argv0) {
     (void)argv0;
     gfxInitDefault();
+    pdisp_attach_screens();  // (when the GPU composites, it shows the screens)
     sShm.magic = ACWW_SHM_MAGIC;
     open_audio();
     return &sShm;
@@ -95,10 +99,12 @@ void frontend_backend_frame(AcwwShm *shm) {
     int tx = t.px - 32, ty = t.py - 24;
     shm->touch_down = (k & KEY_TOUCH) && tx >= 0 && tx < 256 && ty >= 0 && ty < 192;
     if (shm->touch_down) shm->touch_x = tx, shm->touch_y = ty;
-    show(GFX_TOP, shm->pixels);
-    show(GFX_BOTTOM, shm->pixels + 256 * 192);
-    gfxFlushBuffers();
-    gfxSwapBuffers();
+    if (!render_presenting()) {  // (else the GPU has shown them: pica_display.c)
+        show(GFX_TOP, shm->pixels);
+        show(GFX_BOTTOM, shm->pixels + 256 * 192);
+        gfxFlushBuffers();
+        gfxSwapBuffers();
+    }
     feed_audio(shm);
 }
 

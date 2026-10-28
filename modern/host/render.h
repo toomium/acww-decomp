@@ -17,6 +17,9 @@ void render_frame(void);           // at VBlank: the frame from the VRAM banks, 
 const uint32_t *render_screen(int screen);  // 0 top, 1 bottom: 256x192 pixels, 0x00RRGGBB (the top byte is ignored)
 // 1: the screens are put together by the GPU (wgpu_display.h, which can show them): render_screen reads them back
 int render_on_gpu(void);
+// 1: the GPU shows the screens itself (wgpu_display.c presenting, the 3DS's pica_display.c): render_screen would
+// read them back
+int render_presenting(void);
 int render_gx_fifo_irq_level(void);    // the GX FIFO interrupt line (IRQ 21)
 void render_debug(void);           // ACWW_STATS diagnostics
 void render_exit_report(void);     // ACWW_RENDER_COMPARE's summary, ACWW_GPU2D_FEATURES
