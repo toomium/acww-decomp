@@ -1,0 +1,387 @@
+# Nintendo 3DS port (plan)
+
+Goal: the game as a native 3DS homebrew program (`.3dsx`, later `.cia`), built from this tree like the PC builds,
+with the 3D scenes drawn by the 3DS's GPU (PICA200) sharper than the DS's 256x192, smoothed edges, and stereoscopic
+3D. Not an emulator: the same sources and the same runtime (`modern/host/`) as the PC port, with a 3DS platform
+layer, frontend and 3D backend added beside the PC ones.
+
+This file is the plan and, as work goes on, its log (as docs/portability.md is for the PC platforms). Each task
+says what to read first, what to write, and how to know it is done; tasks of a phase are done in order unless they
+say otherwise. Write down what you find under the task, with the date.
+
+Everything in section 1 was checked on 2026-10-28 on this machine (commands and results there). Anything not
+checked is marked **unverified** and has a task that checks it. Don't add facts to this file without checking them
+the same way.
+
+## 0. Rules for whoever works on this
+
+- Branch `3ds` of the fork (`origin`); `upstream` is the PC port. Merge `upstream/main` regularly. The 3DS work
+  adds files and touches shared ones as little as it can, so that these merges stay easy.
+- Changes to shared code (game sources in `src/` and `include/`, shared runtime files, `tools/`) go in **their
+  own commits**, separate from 3DS-only files, each one useful on its own: they are candidates for pull requests to
+  upstream. A shared change must not change the PC builds' behaviour (checked with `tools/host_oracle.sh`, task
+  T0.2).
+- The game sources are not changed for the 3DS. If the game needs a change to work on ARM32, it is a portability
+  bug and is fixed for every build.
+- Read docs/host.md first (how the runtime works, its checks and options), then the files a task names.
+- Write code like the code around it: the same comment style (what and why, in plain sentences), naming, C11 for
+  the runtime.
+- Options stay environment variables (`ACWW_*`, docs/host.md); the 3DS gets them from a file (T2.2), no second
+  options system.
+- The 3DS API is whatever the installed headers say (`/opt/devkitpro/libctru/include`: `3ds/`, `c3d/`); the
+  examples in `/opt/devkitpro/examples/3ds` show working use. Don't write calls from memory.
+
+## 1. Facts (checked 2026-10-28)
+
+### 1.1 This machine
+
+| What | Result |
+|---|---|
+| devkitPro | `/opt/devkitpro`: devkitARM (`arm-none-eabi-gcc` 16.1.0), libctru with citro3d and citro2d (`libctru/lib/libcitro3d.a`, headers in `libctru/include`), tools `3dsxtool`, `smdhtool`, `picasso`, `tex3ds`, `3dslink`; examples in `examples/3ds` |
+| Emulator | Azahar 2126.2 (flatpak `org.azahar_emu.Azahar`) |
+| armhf Linux cross compiler, qemu | not installed; in Ubuntu 24.04's archive: `gcc-arm-linux-gnueabihf`, `g++-arm-linux-gnueabihf`, `qemu-user` (8.2.2) |
+| libclang for Python (`tools/host_portcheck.py`) | not installed (`pip install --user clang==21.*`, docs/host.md) |
+| ROM | `~/Dokumente/Animal Crossing - Wild World (USA) (Rev 1).nds`: SHA-1 `77fde3e3...c351`, the supported one (`acww_usa.sha1`); **32 MB** (header: 32 MB card, 33,131,516 bytes used). `modern/host/card.c`'s comment "ACWW's is 16 MB" is wrong |
+| Oracle captures (`~/acww/ref/oracle`) | none; `~/acww` doesn't exist |
+| Host compiler | GCC 13.3.0 (Ubuntu 24.04) |
+| PC build `build/host64_usa/acww` | the attract demo and title run (headless to frame 3000; in a window to frame 900 with `ACWW_RENDERER3D=own` and `wgpu`, RX 5700 XT); `tools/host_oracle.sh ... quick` passes against captures recorded from it. **It crashes in the oracle's play run** (A every second from frame 2400): SIGSEGV at frame 2619, a call through a null vtable in `EffectModel::~EffectModel()` (`src/main/unk_0208f268.cpp:1451`), from `EffectModelGroup::~EffectModelGroup()` ← `EffectSplProc::~EffectSplProc()` ← `ProcBase::postDelete` ← `TaskList::run` ← `Main_Loop`: probably the user's crash (T0.1) |
+
+### 1.2 The game and runtime under devkitARM (trial build, not committed)
+
+Done with a throwaway script that took every game unit's command from `build_host64.ninja`, replaced `-m64 -fPIE`
+with `-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft` (the flags of devkitPro's 3DS example Makefiles) and
+added `-fpcc-struct-return` (as the i386 build), and again without it (as D2 decides):
+
+- **All 872 game units compile**, both ways, with `arm-none-eabi-gcc` without errors, including the `static_assert`s on the
+  save data's layout.
+- **The runtime does not compile unchanged**, for one reason: on arm-none-eabi `uint32_t` is `unsigned long` and
+  `int32_t` is `long` (on every PC target they are `unsigned int` / `int`). The game's `u32`/`s32`
+  (`include/types.h`) are `unsigned int` / `signed int`; the runtime's are `uint32_t` / `int32_t` (`host.h`,
+  `gpu2d/gpu2d_internal.h`, `gpu3d/gpu3d_internal.h`, `sdk.c`, `wgpu_display.c`), and the two meet in the same
+  files (`include/sys/OSThread.h` in `os.c`, `pxi7.c`, `wm7.c`). Changing those five typedefs to `unsigned int` /
+  `signed int` leaves errors only where the runtime's public headers say `uint32_t` and the code passes `u32 *`:
+  `render.c`, `render_selftest.c`, `render_selftest3d.c`, `gpu2d/gpu2d.c`, `gpu3d/gpu3d_geom.c` (about 20 sites),
+  plus `-Wformat` warnings. Changing the game's types instead (to `__UINT32_TYPE__`) breaks 171 game units (it
+  mixes `s32` and `int`/`BOOL` freely): not an option. Fix: T1.1.
+- Missing for the 3DS, as expected: the ARM32 variant of `coro_switch.S` and of `host_coro_prepare` (`coro.c`:
+  `#error`), `plat_posix.c` (needs `sys/mman.h`), `debug_posix.c` (needs `link.h`; with `HOST_DEBUG_POSIX` 0 it
+  is empty, as on Windows), the melonDS files.
+- **Trial link** (game objects + runtime objects with the type fix + libctru, `-specs=3dsx.specs`; the game objects
+  with `-fpcc-struct-return`, the runtime's without: a mismatch the linker can't see, so the link proves nothing
+  about it - D2 removes it): the only
+  undefined symbols are the ones still to be written or excluded: `host_plat_*` (11 functions), `host_coro_switch`,
+  `host_coro_prepare`, `render_selftest*` (their files were left out), `host_guards_*` / `host_debug_*` (their files
+  were left out; with `HOST_DEBUG_POSIX` 0 and no `HOST_GUARDS` they are stubs), and `timespec_get`
+  (`gpu3d/gpu3d_raster.c:573,588`, a timing aid; newlib doesn't have it). No game symbol is missing, no C++ name
+  differs.
+- Sizes (`arm-none-eabi-size`, all objects): code 3.8 MB, data 0.13 MB, **bss 19.9 MB**. The largest: the 3D
+  engine's polygon and vertex RAM (`sPolyRam` 2.6 MB, `sVertexRam` 1.5 MB), the main RAM arena (`gHostMainRam`
+  2 MB), the 2D renderer's state (`sEngine` 2.0 MB, `sOverlap` 1.2 MB, `sDeferred` 0.75 MB), `render.c`'s `gpu`
+  buffer 0.75 MB, the VRAM windows and banks (`vram.c`, about 2.4 MB).
+- The game and the runtime contain no `__arm__` / `__thumb__` conditionals; the runtime's per-CPU code is
+  `coro_switch.S`, `coro.c` (`host_coro_prepare`), `os.c:166` (`host_dump_threads`, debugging only: its `#else`
+  assumes arm64's frame layout), `main.c:46` (`host_panic`: `*(va_list *)&args`; ARM32's `va_list` is a struct
+  holding one pointer, so the cast has the same meaning as on i386), `debug_posix.c`, `hw.c` (x86-64 Linux only).
+- The runtime's threads share data through 32-bit `__atomic_*` only (`snd7/output.c`, `frontend_sdl.c`, `hw.c`,
+  `frontend.c`); ARMv6K has the instructions for these (ldrex/strex).
+- A test program using `setenv`, `localtime_r`, `time`, `memalign`, `socket`, `fopen("sdmc:/...")` links with
+  libctru and `3dsxtool` turns it into a `.3dsx`.
+
+### 1.3 The 3DS (from the installed headers and examples)
+
+| | DS (original) | 3DS |
+|---|---|---|
+| CPU | ARM946E-S, 67 MHz | ARM11 MPCore, ARMv6K (devkitPro's flags: `-march=armv6k -mtune=mpcore -mfloat-abi=hard`: hardware floating point). `SYSCLOCK_ARM11` = 268,111,856 Hz (also `svcGetSystemTick`'s rate); New 3DS: `SYSCLOCK_ARM11_NEW` = `SYSCLOCK_ARM11_LGR2` = 3x, `osSetSpeedupEnable` (`3ds/os.h`) |
+| Cores for the program | – | core 0 always; core 1 one thread, after `APT_SetAppCpuTimeLimit`; core 2 (New 3DS) only with an exheader flag (not for a `.3dsx` without one); core 3 never (`3ds/thread.h`) |
+| Screens | 2 x 256x192 | top 400x240, bottom 320x240 (touch). Render targets are made transposed (`C3D_RenderTargetCreate(240, 400, ...)`, `examples/3ds/graphics/gpu/*`) with the `Mtx_*Tilt` projections. Wide mode (`gfxSetWide`): top 800x240 with non-square pixels (twice the horizontal resolution), not with stereoscopic 3D, not on the Old 2DS (`3ds/gfx.h`) |
+| 3D | geometry engine + rasteriser | PICA200 via citro3d: vertex shaders (`picasso`), fixed-function fragment stage (TEV combiners); alpha test, blending with a separate alpha equation (`C3D_AlphaBlend`, `GPU_BLEND_MAX` exists), stencil, Z- or W-buffer (`C3D_DepthMap(bIsZBuffer, ...)`), fog LUT (`FogLut_FromArray`, 256 entries), texture formats RGBA8, RGB8, RGBA5551, RGB565, RGBA4, LA8, L8, A8, ... ETC1 (no palette formats), `GPU_MIRRORED_REPEAT`. `C3D_TexLoadImage` / `C3D_TexUpload` is a plain `memcpy` (disassembled): the data must already be in the PICA's tiled layout |
+| Display transfer | – | `GX_TRANSFER_SCALE_X` / `_XY` (2x1 / 2x2 averaging) and `GX_TRANSFER_OUT_TILED` (a linear picture into the tiled layout textures need, on the GPU) (`3ds/gpu/gx.h`) |
+| Sound | – | ndsp (libctru); needs the DSP firmware at `sdmc:/3ds/dspfirm.cdc` (the path is in `libctru.a`), dumped by the user (DSP1) |
+| Memory | 4 MB | **unverified** how much a `.3dsx` gets on each model: measure with `osGetMemRegionSize(MEMREGION_APPLICATION)` and `envGetHeapSize()` / `envGetLinearHeapSize()` (T2.2) |
+
+## 2. Decisions
+
+- **D1: same tree, same build script.** `tools/configure_host.py --os 3ds` writes `build_host_3ds.ninja`, building
+  `build/host3ds_<version>/acww.elf` from the same source lists and per-source flags as the other builds, and from
+  it `acww.smdh` and `acww.3dsx`. No separate Makefile.
+- **D2: flags.** CPU: `-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft`, plus `-mword-relocations` (as
+  devkitPro's example Makefiles; T2.1 checks whether `3dsxtool` needs it for every unit). Link: `-specs=3dsx.specs
+  -L$DEVKITPRO/libctru/lib -lcitro3d -lctru -lm`. The game keeps its `GAME_FLAGS` as on i386 (32-bit, `HOST64`
+  off) **without** `-fpcc-struct-return`: the x86-64 build dropped it with identical results (docs/portability.md
+  2.2), so the game doesn't need it, and on ARM it would make game and runtime disagree on how a small struct is
+  returned.
+- **D3: the runtime's integer types are the game's.** `u32`/`s32` stay `unsigned int`/`signed int` everywhere
+  (T1.1). It changes nothing on the PC targets (there `uint32_t` is `unsigned int`).
+- **D4: the ROM is read from the SD card when needed, not held in memory.** It is 32 MB, and the program's static
+  data alone is 20 MB. Only `card.c` reads it (`host_card_read`, `card_read_data`) and `main.c` its header
+  (`host_rom`); a file read at an offset with a small cache is enough (T2.3). On the PC nothing changes.
+- **D5: the ROM and the save on the SD card.** `sdmc:/3ds/acww/game.nds` by default (`argv[1]` when the launcher
+  passes one); the save beside it (`game.sav`), which `pxi7.c` already does for runs with a window. The ROM is the
+  user's own; nothing of the game is in the program.
+- **D6: 2D on the CPU, 3D on the PICA200.** `gpu2d/` is reused as it is, with `defer3d`. `gpu2d.wgsl` (the 2D
+  layers on the GPU) needs fragment shaders the PICA doesn't have and is not ported; revisit only if profiling says
+  the 2D layers are the bottleneck. The 3D rasteriser gets a third backend, `gpu3d_pica.c`, modelled on
+  `gpu3d_wgpu.c`; the composite gets `pica_display.c`, modelled on `wgpu_display.c`.
+- **D7: the New 3DS first.** The Old 3DS is best effort (T4.4). The game's own code is cheap (it ran at 67 MHz);
+  the cost is the runtime around it (register calls, virtual time, VRAM windows, the 2D layers, the geometry
+  engine). How fast it runs is **unverified** until T2.8.
+- **D8: checking.** ARM32 behaviour is checked against the x86-64 reference with the existing tools (screenshots,
+  sound, RAM hashes: docs/host.md) in an armhf **Linux** build under qemu (phase 1), before any 3DS is involved. On
+  the 3DS: Azahar for quick runs, real hardware for speed and anything Azahar gets wrong.
+
+## 3. New files
+
+```
+modern/host/
+  coro_switch.S          + the ARM32 variant (#elif defined(__arm__))
+  coro.c                 + host_coro_prepare for ARM32
+  plat_3ds.c             plat.h for the 3DS (libctru)
+  frontend_3ds.c         frontend.h's backend: screens, hid (keys, touch), ndsp (sound), the home menu and sleep
+  pica_display.c/.h      the screens composited on the PICA (2D pictures + 3D picture), scaled to the 3DS screens
+  gpu3d/gpu3d_pica.c     the 3D engine's polygons on the PICA (citro3d), the texture cache
+  gpu3d/gpu3d_pica.v.pica  its vertex shader (picasso)
+  tests/coro_a32_test.c
+tools/configure_host.py  --arch arm (armhf Linux, qemu) and --os 3ds
+meta/3ds/icon.png        the program's 48x48 icon (own artwork, not the game's)
+```
+
+## 4. Phases and tasks
+
+### Phase 0: the reference
+
+**T0.1 The PC build's crash.** Reproduced here (1.1) with the oracle's play run:
+```
+mkdir -p /tmp/play
+ACWW_ROM="$HOME/Dokumente/Animal Crossing - Wild World (USA) (Rev 1).nds" ORACLE_OUT=/tmp/play \
+    tools/host_oracle.sh build/host64_usa/acww play-raw    # then /tmp/play/log.txt
+```
+Ask the user whether this is their crash (which build, renderer, point in the game, output). Then find the cause
+(`addr2line -f -C -i -e build/host64_usa/acww <offsets>` turns the report's offsets into lines; the null vtable
+belongs to one of the three 0x30-byte members at 0x120-0x1b0 of an `EffectModel`, which its implicit destructor
+destroys: find which object was never constructed or was overwritten, e.g. with `ACWW_WATCH`). Upstream's checks
+pass the play run, so compare what differs here, the compiler first (GCC 13.3 here; upstream's notes mention GCC
+15). Fix it in its own commit (a pull request to upstream). Done when the play run reaches frame 25000.
+
+**T0.2 Reference captures.** There are none on this machine. Record them from the x86-64 build with the CPU
+renderers (what `tools/host_oracle.sh` compares; it sets that up itself):
+```
+ACWW_ROM="$HOME/Dokumente/Animal Crossing - Wild World (USA) (Rev 1).nds" ORACLE_DIR=$HOME/acww-ref \
+    tools/host_oracle.sh build/host64_usa/acww record
+```
+(The script sets `ACWW_FIRMWARE` to `~/acww/ref/firmware_generated.bin`; that file doesn't exist here, and a
+missing firmware image falls back to the built-in one, `pxi7.c:475`: the captures are made with that.) Checked
+2026-10-28: `record` and then `quick` (frames 2500, 8000 and the sound identical) work; the play captures are
+incomplete until T0.1 is fixed: record again after it. Then run `quick` and `play` against them with the same
+variables: both must pass. Also write a RAM hash file of the play run
+(`ACWW_RAMHASH`, docs/host.md) to compare the ARM32 builds with frame by frame. Done when both checks pass and the
+files are written; note the directory here.
+
+### Phase 1: ARM32 without a 3DS
+
+**T1.1 One set of integer types (shared, upstream PR).** Change the runtime's typedefs of `u8`/`u16`/`u32`/`s32` in
+`host.h`, `gpu2d/gpu2d_internal.h`, `gpu3d/gpu3d_internal.h`, `sdk.c` and `wgpu_display.c` to the game's
+(`unsigned char`, `unsigned short`, `unsigned int`, `signed int`), and the runtime's own headers that pass pixel and
+register buffers (`render.h`, `gpu2d/gpu2d.h`, `gpu3d/...`, `frontend.h` where its users mix them) consistently to
+one of `u32` / `uint32_t` so that no `u32 *` meets a `uint32_t *`. Fix the `-Wformat` warnings that remain (`%u`
+for `u32`; `PRIu32` only for real `uint32_t`). Replace `timespec_get` in `gpu3d_raster.c` with
+`host_plat_time_ns()`. Check: every runtime C file compiles with `arm-none-eabi-gcc -Wall` (the 1.2 flags plus
+`-DHOST -Iinclude -DHOST_DEBUG_POSIX=0`) without errors or warnings, and the x86-64 build passes the T0.2 checks
+unchanged. Done when both hold.
+
+**T1.2 ARM32 coroutine switch (shared, upstream PR).** In `coro_switch.S`, a `#elif defined(__arm__)` variant
+like the arm64 one: push r4-r11, lr and d8-d15 (AAPCS's callee-saved registers), store sp in `*save`, load sp from
+`to`, pop, return; `host_coro_boot` calls `fn(arg)` from two of the saved registers. In `coro.c`'s
+`host_coro_prepare`, the matching initial frame (sp 8-byte aligned at the call, the AAPCS rule). In `os.c`'s
+`host_dump_threads`, the frame pointer's slot for ARM32 (`r11` in the saved frame). A test like
+`tests/coro_a64_test.c` (callee-saved registers survive a switch, arguments arrive, the stack is aligned), built for
+ARM32 and run under `qemu-arm` (T1.3's toolchain). Done when the test passes.
+
+**T1.3 `--arch arm` (armhf Linux, shared, upstream PR).** Install `gcc-arm-linux-gnueabihf
+g++-arm-linux-gnueabihf qemu-user` (apt; the user does it, it needs sudo). In `tools/configure_host.py`, an `arm`
+arch like `aarch64` (read its branch: `A64`, `--cross`, `--qemu`, `ACWW_RUNNER`): `arm-linux-gnueabihf-gcc`,
+`-march=armv6k -mfpu=vfp -mfloat-abi=hard`, the 32-bit game flags of D2, `frontend_none.c`, no melonDS, no
+wgpu, `build_host_arm.ninja`, `build/hostarm_<version>/acww`, and the `coro-a32-test` target. Done when it builds
+and `qemu-arm -L /usr/arm-linux-gnueabihf build/hostarm_usa/acww <rom>` reaches the title headless
+(`ACWW_HEADLESS=1 ACWW_SHOT=...`).
+
+**T1.4 Portability check for ARM32.** Install libclang for Python (1.1). Add an `arm32` target to
+`tools/host_portcheck.py`'s list (`--target=arm-none-eabi -mfloat-abi=hard -march=armv6k` plus the game flags) and
+run it. Fix what it reports beyond the baseline (in the game: portability fixes, own commits). Done when it reports
+0 for `arm32`. A place to look in T1.5: the runtime's own C files are compiled without `-fsigned-char` (only the
+game's are), and plain `char` is unsigned on ARM; the aarch64 build has the same property and plays like the
+reference, so it is not a known bug.
+
+**T1.5 The armhf build plays like the reference.** Under qemu with `ACWW_RUNNER="qemu-arm -L
+/usr/arm-linux-gnueabihf"`: the T0.2 `quick` and `play` checks, and the town, save and continue scripts
+(docs/host.md). Where it differs: `ACWW_RAMHASH` against T0.2's file to find the first frame, `ACWW_RAMDUMP` to
+find the address (docs/host.md "Finding where two builds part"). Every fix is a portability fix in its own commit.
+Done when screenshots, sound and save files are the same as the reference's. (If they differ only by a few
+pixels from floating-point rounding, write down where and why instead of forcing them equal.)
+
+### Phase 2: on the 3DS, CPU renderers
+
+**T2.1 `--os 3ds` in configure_host.py.** The compilers from `$DEVKITARM/bin` (`DEVKITPRO`/`DEVKITARM` from the
+environment, as devkitPro sets them; fail with a clear message without them), the flags of D2, include path
+`$DEVKITPRO/libctru/include`, the link of D2, then `smdhtool --create "<title>" "<description>" "<author>"
+meta/3ds/icon.png acww.smdh` and `3dsxtool acww.elf acww.3dsx --smdh=acww.smdh` (the commands of
+`$DEVKITARM/3ds_rules`). Runtime files: the common ones plus `plat_3ds.c` and `frontend_3ds.c`, without
+`plat_posix.c`, `plat_win32.c`, `frontend_sdl.c`, `frontend_ui.c`, `frontend_viewer.c`, the melonDS files
+(`melon_none.c` stays), `wgpu_display.c`/`gpu3d_wgpu.c` compile as their stubs (no `HOST_WGPU`); `debug_posix.c`
+and `guards.c` with `HOST_DEBUG_POSIX` 0 and no `HOST_GUARDS` (as on Windows: configure_host.py's `WIN` branch
+shows how). Define `HOST_FRONTEND_3DS`. Done when `acww.3dsx` is built.
+
+**T2.2 `plat_3ds.c`.** Every function of `plat.h`, with `plat_posix.c` as the model; for each libctru call, look
+it up in the header first:
+- time: `svcGetSystemTick()` to nanoseconds (`SYSCLOCK_ARM11` ticks a second); sleeping: `svcSleepThread`
+  (nanoseconds);
+- local time: `time()` + `localtime_r`;
+- background thread: `threadCreate` (`3ds/thread.h`: priority 0x18-0x3f, the main thread's usually 0x30; core 1
+  needs `APT_SetAppCpuTimeLimit` first and allows one thread). **Unverified**: how the 3DS kernel shares a core
+  between threads (whether threads of the same priority are time-sliced). Until checked, keep the watchdog
+  sleeping between its checks (it does: `hw.c`) and run it at a lower priority than the game (a higher number);
+- stacks and pages: `memalign` + `memset` (no guard page: no `mprotect` for a 3DS application; say so in a comment);
+- `host_plat_restart`: the simplest thing that works (back to the home menu), with a comment;
+- image bounds, backtraces: none (return 0), as the platform can't;
+- options: at start, read `sdmc:/3ds/acww/acww.cfg` (`NAME=value` lines, `#` comments) into `setenv`, so that every
+  `ACWW_*` option of docs/host.md works unchanged; then log the memory numbers (1.3: `osGetMemRegionSize`,
+  `envGetHeapSize`, `envGetLinearHeapSize`) to `sdmc:/3ds/acww/log.txt` (stderr there too).
+Done when the program starts in Azahar and runs headless (`ACWW_HEADLESS=1` in acww.cfg, `ACWW_SHOT` to the SD
+card, `ACWW_EXIT_FRAME`) to the title, and the memory numbers for Azahar's Old and New 3DS are written in 1.3.
+
+**T2.3 The ROM from the SD card (D4).** `card.c`: open the file once; `host_card_read` and `card_read_data` read
+through a small cache of 512-byte pages (`fseek` + `fread`; the SDK reads 0x200-byte pages, `card.c:1-3`).
+`host_rom` keeps its meaning for `main.c`'s header copy (only the first 0x170 bytes). On the PC builds the
+behaviour is the same (also through the cache, or keep `host_plat_read_file` there: whichever is simpler, the same
+results either way). Fix the comment's 16 MB. Done when the T0.2 checks pass on x86-64 and the 3DS build reaches
+the title with the ROM not in memory.
+
+**T2.4 `frontend_3ds.c`: picture.** `frontend_backend_open` returns a plain `AcwwShm` (as `frontend_sdl.c` does);
+`frontend_backend_frame` shows `pixels` (top screen, then bottom, `0x00RRGGBB`). First version, the simplest that
+works: the two 256x192 pictures converted into the framebuffers (`gfxInitDefault`, `gfxGetFramebuffer`, top
+centred in 400x240, bottom in 320x240; the framebuffers are column-major, rotated, see
+`examples/3ds/graphics/bitmap`), `gfxFlushBuffers`, `gfxSwapBuffers`, `gspWaitForVBlank`. Done when the attract
+demo is seen in Azahar.
+
+**T2.5 `frontend_3ds.c`: input.** `hidScanInput` / `hidKeysHeld` to `keys` (`frontend.h`'s bit order: A, B,
+Select, Start, Right, Left, Up, Down, R, L, X, Y; the circle pad as the D-pad), `hidTouchRead` to
+`touch_x/y/down`, mapped from the bottom screen's 320x240 to the centred 256x192 (outside it: no touch).
+`aptMainLoop()` returning false sets `quit`. Done when the intro can be played to the town in Azahar.
+
+**T2.6 `frontend_3ds.c`: sound.** `ndspInit` (fails without `sdmc:/3ds/dspfirm.cdc`: tell the user then, and play
+on silently), one stereo PCM16 channel at `ACWW_AUDIO_RATE` (32728 Hz), a few `ndspWaveBuf`s in `linearAlloc`'d
+memory refilled from the `audio` ring (`audio_read` / `audio_write`, as `frontend_sdl.c`'s `audio_callback` reads
+it, including holding the queue level). `examples/3ds/audio/streaming` shows the wave buffer cycle. Done when music
+and effects play without gaps in Azahar, and the README says how to get `dspfirm.cdc`.
+
+**T2.7 Save, sleep, the home menu.** The save is written through as on the PC (`pxi7.c`): check that a write
+reaches the SD card before the home menu or power-off can end the program (close / `fflush` + `fsync`). On
+`APTHOOK_ONSUSPEND` / `ONSLEEP` pause the game with `host_set_paused(1)` as the frontend's key binding
+screen does (`hw.c:109`), on `ONRESTORE` / `ONWAKEUP` resume it with `host_set_paused(0)` (`aptHook`, `3ds/services/apt.h`). Done when
+saving in game, leaving by the home menu and starting again continues the town.
+
+**T2.8 On hardware: measure.** On a New 3DS with `osSetSpeedupEnable(true)`, and on an Old 3DS: frames a second in
+the title, the town, a house, with `ACWW_FPS`. `ACWW_PROFILE` needs POSIX signals and is not there: measure with
+`svcGetSystemTick` around the game's frame, `render_frame` (2D and the 3D geometry), the 3D rasteriser, the
+frontend; print once a second. Write the numbers here. They decide the order of phases 3 and 4. Done when written.
+
+### Phase 3: 3D on the PICA200
+
+**T3.1 Map the features.** Read `gpu3d_wgpu.c` (its header comment lists what the game uses and what it doesn't),
+`gpu3d_internal.h` (`G3RenderState`, the polygon list), `gpu3d_tex.h`, `gpu3d_raster.c` (the reference
+behaviour), and the citro3d headers and examples (`examples/3ds/graphics/gpu`: `textured_cube`, `mipmap_fog`,
+`both_screens`, `stereoscopic_2d`, `wide_mode_3d`). Write a table here, one row per feature `gpu3d_wgpu.c` does:
+how the PICA does it, or that it can't and what instead. The facts of 1.3 decide most rows:
+- textures: the DS's 7 formats decoded on the CPU into a PICA format (RGBA8 or RGBA5551 / RGBA4 to save memory),
+  straight into the tiled layout `C3D_TexLoadImage` expects, cached by image address, format, size, palette
+  address and a change counter from `vram.c`; the DS's sizes are 8-1024 in powers of two (GBATEK, TEXIMAGE_PARAM);
+  check what `C3D_TexInit` accepts (its return value);
+- repeat / flip / clamp: `GPU_REPEAT`, `GPU_MIRRORED_REPEAT`, `GPU_CLAMP_TO_EDGE` (`GPU_TEXTURE_WRAP_PARAM`);
+- modulation / decal / vertex colours: TEV stages (`C3D_TexEnv*`);
+- alpha test (`C3D_AlphaTest`), translucency (`C3D_AlphaBlend`; the DS's "larger alpha kept": alpha equation
+  `GPU_BLEND_MAX`);
+- the translucent polygon ID rule: stencil (`C3D_StencilTest`, `C3D_StencilOp`), as `gpu3d_wgpu.c` does it;
+- Z-buffer / W-buffer: `C3D_DepthMap`;
+- fog: the fog LUT from the DS's 32-entry table, offset and shift; whether the PICA's fog index (depth) can be
+  made to follow the DS's: check and write down;
+- clear colour, clear depth, the rear plane: as `gpu3d_wgpu.c`.
+Done when every row is filled.
+
+**T3.2 `gpu3d_pica.c`: polygons.** The interface of `gpu3d_wgpu.c` (`g3w_init` / `g3w_render` / `g3w_picture`
+become `g3p_*`), chosen in `render.c` with `ACWW_RENDERER3D=pica` (the default in the 3DS build). Per frame: the
+geometry engine's polygons (screen positions with 4 fractional bits, depth, w, colour, texture coordinates) into a
+`linearAlloc`'d vertex buffer; a vertex shader that passes them on; one draw call per run of polygons with the same
+state; a `C3D_RenderTarget` at 256x192 first (transposed: 1.3). Done when the town's 3D looks like the CPU
+rasteriser's picture of the same frame (render both: `ACWW_RENDER_COMPARE`'s idea, docs/host.md).
+
+**T3.3 `pica_display.c`: composite.** The 3D picture and the 2D renderer's deferred words put together, as
+`wgpu_display.c` does; its shader and the comment above `gpu2d_deferred` (`gpu2d/gpu2d.h:55-67`) are the rules.
+Without fragment shaders, as textured quads: the CPU turns each screen's deferred words into two 256x192 textures,
+UNDER (the colour below the 3D layer, opaque) and OVER (colour and alpha in front of it), written linearly and tiled
+by the display transfer (`GX_TRANSFER_OUT_TILED`); the PICA draws UNDER, the
+3D picture blended with its own alpha, OVER blended with its alpha. The kinds (gpu2d.h):
+- 0, `A` final: OVER = A, opaque;
+- 1, C where P is opaque, else A: whether P is opaque is known only on the GPU. UNDER = A; OVER = C, drawn with
+  the 3D picture bound as a second texture (`GPU_TEXTURE1`) whose alpha a TEV stage passes on, and an alpha test
+  that keeps only the pixels where it is opaque. The same "where P is opaque" mask is needed by kinds 2 and 3.
+  **Unverified** that the TEV and alpha test do this exactly: try it first in T3.3, write the result here;
+- 2, `min(63, (C*p1 + P*p2 + 8) >> 4)` where P is opaque: a sum, not a mix. One idea: the 3D picture drawn scaled
+  by p2/16, then C*p1/16 added (additive blending saturates like the `min`). **Unverified**: the alpha test works
+  on the TEV's output alpha, so one pass can't carry both the p2/16 factor and the "P opaque" mask; it may need two
+  passes or the stencil buffer. Work it out in T3.3 and write it here;
+- 3, P over C: UNDER = C; e = 1 the 3D picture's alpha; e = 2 / 3 (brightness up / down by p1) a white / black
+  OVER with alpha p1/16 where P is opaque (`P + ((63 - P) * p1 + 8) >> 4` is a mix towards white, exact up to
+  rounding);
+- the master brightness (`gpu2d_deferred_lines`, per line): white / black quads per run of lines with the same
+  factor.
+The 2D pictures and the 3D picture then go to the screens: the top one scaled by 1.25 to 320x240 and centred, the
+bottom one 1:1 centred (T2.5's touch mapping stays right). Check at 256x192: read the result back and compare with
+the CPU renderers' `render_screen` for the same frames; write the differences that remain here. Done when the
+title, the town and a house look like the CPU renderers' pictures.
+
+**T3.4 Resolution.** The 3D target at 2x (512x384) and reduced by the display transfer's `GX_TRANSFER_SCALE_XY`
+(2x2 averaging: the edge smoothing, like the PC's `ACWW_SCALE3D` + MSAA), then scaled to 320x240 like the 2D
+layers; an option `ACWW_3DS_FILTER` for the 2D layers' filter (nearest / linear). Wide mode (1.3) as an option:
+the top screen at 800x240 (640 for the picture), not on the Old 2DS, not together with T4.1. Done when the options
+work and their cost in frames a second is written here.
+
+### Phase 4: beyond a DS
+
+**T4.1 Stereoscopic 3D.** When the 3D slider is up (`osGet3DSliderState`, 0.0-1.0): the 3D picture drawn twice,
+left and right eye, each polygon's x moved by a parallax from its w (larger for far points, 0 at the depth chosen as
+the screen plane); `gfxSet3D(true)` and a render target per eye (`examples/3ds/graphics/gpu/stereoscopic_2d`).
+The 2D layers stay at screen depth. Nothing in the geometry engine changes: the shift is in the vertex shader as a
+uniform. Tune the strength and the screen plane in the town. Done when the town has depth that is comfortable to
+look at; menus and text unchanged.
+
+**T4.2 Local play between consoles.** `wm7.c` sends the radio's traffic as UDP datagrams through its POSIX branch.
+The 3DS has BSD sockets after `socInit(buffer, size)` with a 0x1000-aligned buffer (`3ds/services/soc.h`). Check
+which calls of `wm7.c` libctru's sockets support (broadcast, non-blocking, `getaddrinfo`), adapt, and test two
+3DSes, then a 3DS and a PC, with the gate (`tools/host_wireless_test.sh` is the PC's test). Done when a visit
+works.
+
+**T4.3 Wider view (experiment).** Whether the top screen can show 400 pixels wide instead of 256 by widening the
+game's projection. The game may cull objects outside the DS's view, so things could pop in at the sides: test,
+write the result here either way.
+
+**T4.4 Old 3DS.** With T2.8's numbers: what has to get faster for 30 or 60 frames a second at 268 MHz.
+Candidates: the 2D layers only where they changed; the geometry engine's hot loops; `-O2` for the runtime; the
+rendering on core 1 (`APT_SetAppCpuTimeLimit`) while the game runs on core 0.
+
+**T4.5 A `.cia`** (optional): with `makerom` and a banner, for installing to the home menu. Check then whether
+the exheader can enable core 2 on the New 3DS (1.3).
+
+## 5. Risks
+
+- **Speed** (D7): the largest unknown; measured in T2.8 so that the plan can change early.
+- **Memory**: 20 MB of static data before any heap, texture cache, render targets and stacks (512 KB a game thread,
+  `os.c`); how much an application gets is unverified (T2.2). If it is too little: the 2D renderer's and the
+  geometry engine's buffers are sized for the worst case and can shrink.
+- **ARM32 behaviour** (T1.5): checked under qemu before the 3DS.
+- **Composite without fragment shaders** (T3.3): kind 1 needs a per-pixel decision on the 3D picture's coverage;
+  if the PICA can't do it cleanly, the fallback is compositing on the CPU at 256x192 with the PICA's 3D read back
+  (lower resolution, still the PICA's speed).
+
+## 6. Log
+
+- 2026-10-28: plan written; the checks of section 1 done (trial build in a scratch directory, nothing committed);
+  the PC build's crash reproduced (T0.1).
