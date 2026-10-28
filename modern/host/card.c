@@ -10,22 +10,40 @@
 #include "plat.h"
 
 #define ROMCTRL 0x040001a4u
-static const u8 *sRom;
+static FILE *sRom;
 static u32 sRomSize;
+static u8 sHeader[0x200];
 static const char *sRomPath;  // (host_rom_path: pxi7.c's default save file)
 static u32 sAddr, sLeft, sIsData;
 
-// the whole image in memory (read once; the DS's cards hold at most 512 MB, ACWW's is 16 MB)
-void card_init(const char *path) {
-    sRomPath = path;
-    size_t n;
-    sRom = host_plat_read_file(path, &n);
-    if (!sRom) { perror(path); exit(1); }
-    if (n > 0xffffffffu) host_fatal("the ROM file is larger than 4 GB");
-    sRomSize = (u32)n;
+// The image read from the file as the game asks for it, through a cache of one block: ACWW's is 32 MB, too much to
+// hold on the 3DS beside the program (docs/3ds.md D4); the game reads its files in runs of 512-byte pages.
+enum { BLOCK = 0x8000 };
+static u8 sBlock[BLOCK];
+static u32 sBlockAddr = ~0u;
+static u8 rom_byte(u32 a) {
+    if (a >= sRomSize) return 0xff;
+    if ((a & ~(u32)(BLOCK - 1)) != sBlockAddr) {
+        sBlockAddr = a & ~(u32)(BLOCK - 1);
+        memset(sBlock, 0xff, BLOCK);
+        if (fseek(sRom, (long)sBlockAddr, SEEK_SET) != 0 || (fread(sBlock, 1, BLOCK, sRom) == 0 && ferror(sRom)))
+            host_fatal("the ROM file can't be read");
+    }
+    return sBlock[a & (BLOCK - 1)];
 }
 
-const u8 *host_rom(u32 *size) { *size = sRomSize; return sRom; }
+void card_init(const char *path) {
+    sRomPath = path;
+    sRom = fopen(path, "rb");
+    if (!sRom) { perror(path); exit(1); }
+    if (fseek(sRom, 0, SEEK_END) != 0) { perror(path); exit(1); }
+    long n = ftell(sRom);
+    if (n < (long)sizeof sHeader) host_fatal("the ROM file is too small");
+    sRomSize = (u32)n;
+    for (u32 i = 0; i < sizeof sHeader; i++) sHeader[i] = rom_byte(i);
+}
+
+const u8 *host_rom(u32 *size) { *size = sizeof sHeader; return sHeader; }  // (the header: main.c)
 const char *host_rom_path(void) { return sRomPath; }
 
 void host_card_dma(void);
@@ -44,7 +62,7 @@ void card_control_written(u32 ctrl) {
 
 // CARDi_ReadCard's fast path (HOST): a 512-byte page straight from the image
 void host_card_read(u32 addr, void *dst, u32 n) {
-    for (u32 i = 0; i < n; i++) ((u8 *)dst)[i] = addr + i < sRomSize ? sRom[addr + i] : 0xff;
+    for (u32 i = 0; i < n; i++) ((u8 *)dst)[i] = rom_byte(addr + i);
 }
 
 u32 card_read_data(void) {
@@ -55,7 +73,7 @@ u32 card_read_data(void) {
             for (int i = 0; i < 4; i++) {
                 u32 a = sAddr + i;
                 if (a < 0x8000) a = 0x8000 + (a & 0x1ff);  // secure area reads mirror (unused by the SDK)
-                v |= (a < sRomSize ? sRom[a] : 0xff) << (i * 8);
+                v |= (u32)rom_byte(a) << (i * 8);
             }
         }
         sAddr += 4;
