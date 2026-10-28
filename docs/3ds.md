@@ -435,3 +435,22 @@ the exheader can enable core 2 on the New 3DS (1.3).
   5 %, the compositing's CPU side 4 %. Azahar's speed isn't the hardware's: T2.8 is still to be measured.
   Not yet seen on a screen: the GPU's pictures on the 3DS's screens (`Mtx_OrthoTilt`); the screenshots are read
   back from the composited pictures, not from the screens.
+- 2026-10-28: first measurement on hardware (T2.8), a New 3DS, the build of commit 48b781ca (`ACWW_FPS=1`):
+  about 29 game frames a second (frameskip 1: half of them drawn); the renderers 2D 3.5 ms, 3D 2.4 ms, compositing
+  4.0 ms a frame on average - so about 24 of the 34 ms a frame are the game, the geometry engine and the runtime.
+  Hardware is about 1.5 times Azahar's speed. In Azahar the window left of the house is black and the shadow under
+  the player missing; on the hardware both are right (an Azahar inaccuracy). A watchdog report at the end of the
+  user's run: probably the home menu (T2.7, pausing there, isn't done yet).
+- 2026-10-28: the time outside the renderers, measured on the PC without drawing (`ACWW_FRAMESKIP=100000000
+  ACWW_FAST=1`, samples with gdb: `perf` and attaching are not allowed on that machine, the program runs as gdb's
+  child): the geometry engine 61 %, register accesses 16 %, DMA 9 %, the game's own code 4 %. Exact speed-ups (the
+  save script's screenshots, save file and sound byte for byte the same): 64-bit divisions in 32 bits where they
+  fit, two divisions a vertex for the screen position instead of four, the feature census inline, no diagnostic
+  vertex copies, FIFO entries run at once when nothing is queued, two getenv calls per polygon / light command
+  gone: 20000 frames without drawing take 13.4 s instead of 14.8 on the PC. `lighting` (once a normal) is the
+  largest single function now; `vram.c remap` (every VRAMCNT change refills all windows) about 3 %.
+  Next, the largest lever: the GPU work (gpu3d_pica.c, pica_display.c) on a second core while core 0 runs the
+  next frame (core 1 needs `APT_SetAppCpuTimeLimit`; core 2 of the New 3DS only with an exheader flag - try, fall
+  back). The frame's inputs must stay stable meanwhile: Gpu2dLayers double-buffered and the BG palette copied, the
+  polygon list (its RAM bank is already double), the texture slots (rewritten at the next raster frame). Then the
+  smaller exact items (remap, the DMA path through the register layer), and T2.7 (home menu, sleep).
