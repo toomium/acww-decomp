@@ -98,8 +98,9 @@ void render_init(void) {
     if (getenv("ACWW_RENDERER") && sOwn && !env_is("ACWW_RENDERER", "own"))
         fprintf(stderr, "render: ACWW_RENDERER=%s unknown (own, melon): own\n", getenv("ACWW_RENDERER"));
     sOwn3d = getenv("ACWW_RENDERER3D") ? !env_is("ACWW_RENDERER3D", "melon") : sOwn;
-    if (getenv("ACWW_RENDERER3D") && sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !env_is("ACWW_RENDERER3D", "wgpu"))
-        fprintf(stderr, "render: ACWW_RENDERER3D=%s unknown (own, wgpu, melon): own\n", getenv("ACWW_RENDERER3D"));
+    if (getenv("ACWW_RENDERER3D") && sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !env_is("ACWW_RENDERER3D", "wgpu") &&
+        !env_is("ACWW_RENDERER3D", "pica"))
+        fprintf(stderr, "render: ACWW_RENDERER3D=%s unknown (own, wgpu, pica, melon): own\n", getenv("ACWW_RENDERER3D"));
     if (sOwn3d) sOwn = 1;
     sCompare = getenv("ACWW_RENDER_COMPARE") ? atoi(getenv("ACWW_RENDER_COMPARE")) : 0;
     // the GPU by default (the own renderers, not compared with melonDS's)
@@ -117,6 +118,11 @@ void render_init(void) {
         if (sGpuDisplay && !env_is("ACWW_GPU2D", "0")) sGpu2dMode = env_is("ACWW_GPU2D_CHECK", "1") ? 2 : 1;
         if (sGpuDisplay && getenv("ACWW_GPU2D_SELFTEST")) sGpu2dMode = 2;
     }
+#ifdef __3DS__
+    // the 3DS: the polygons drawn by its GPU (gpu3d/gpu3d_pica.c), unless ACWW_RENDERER3D=own
+    if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !gpu3d_use_pica())
+        fprintf(stderr, "render: the 3DS GPU's renderer couldn't start: own\n");
+#endif
     if (getenv("ACWW_RENDER_COMPARE_MAX")) sCompareMax = strtol(getenv("ACWW_RENDER_COMPARE_MAX"), 0, 10);
     if (getenv("ACWW_RENDER_SELFTEST") || getenv("ACWW_RENDER_SELFTEST3D")) sCompare = sCompare ? sCompare : 1;
     sGpu2d = sOwn || sCompare;

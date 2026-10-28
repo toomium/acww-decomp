@@ -554,6 +554,27 @@ static void timing_report(void) {
         fprintf(stderr, "gpu3d: rasteriser %.3f ms a frame on average, %.3f ms at most, %ld frames\n",
                 sRenderNs / sRenderFrames / 1e6, sRenderMax / 1e6, sRenderFrames);
 }
+// the texture of texparam / texpal (its size from texparam), row by row, as the 3DS GPU's RGBA8 (r << 24 | g << 16 |
+// b << 8 | a): gpu3d_pica.c decodes each texture once with the same texel fetch as this rasteriser
+void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out) {
+    int w = 8 << (texparam >> 20 & 7), h = 8 << (texparam >> 23 & 7);
+    for (int t = 0; t < h; t++)
+        for (int s = 0; s < w; s++) {
+            u32 c = g3_texel(texparam, texpal, s, t);
+            u32 r = c & 31, g = c >> 5 & 31, b = c >> 10 & 31, a = c >> 16 & 31;
+            *out++ = (r << 3 | r >> 2) << 24 | (g << 3 | g >> 2) << 16 | (b << 3 | b >> 2) << 8 | (a << 3 | a >> 2);
+        }
+}
+
+// ACWW_RENDERER3D=pica (the 3DS): the polygons drawn by its GPU (gpu3d_pica.c) into this rasteriser's buffers, then
+// its fog pass
+static int sPica;
+int gpu3d_use_pica(void) {
+    if (!g3p_init()) return 0;
+    sPica = 1;
+    return 1;
+}
+
 // ACWW_RENDERER3D=wgpu: the polygons drawn by the GPU (gpu3d_wgpu.c), read back into the same frame buffer or not
 static int sWgpu, sWgpuReadback;
 int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback) {
@@ -575,7 +596,10 @@ void g3_render(void) {
     g3_tex_setup();
     if (sWgpu)  // (the GPU's rasteriser: gpu3d_wgpu.c)
         g3w_render(sR, sImgFlat, sPalFlat, sWgpuReadback ? sColor : NULL);
-    else {
+    else if (sPica) {  // (the 3DS GPU's: gpu3d_pica.c; no anti-aliasing pass, it has no coverage)
+        g3p_render(sR, sImgFlat, sPalFlat, sColor, sDepth, sFlags);
+        fog_pass();
+    } else {
         clear_buffers();
         sPE.p = 0;
         for (int i = 0; i < sR->npoly; i++) draw_polygon(sR->poly[i], i);

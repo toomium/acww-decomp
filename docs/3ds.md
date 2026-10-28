@@ -311,7 +311,7 @@ how the PICA does it, or that it can't and what instead. The facts of 1.3 decide
 - clear colour, clear depth, the rear plane: as `gpu3d_wgpu.c`.
 Done when every row is filled.
 
-**T3.2 `gpu3d_pica.c`: polygons.** The interface of `gpu3d_wgpu.c` (`g3w_init` / `g3w_render` / `g3w_picture`
+**T3.2 `gpu3d_pica.c`: polygons. First version 2026-10-28 (see the log).** The interface of `gpu3d_wgpu.c` (`g3w_init` / `g3w_render` / `g3w_picture`
 become `g3p_*`), chosen in `render.c` with `ACWW_RENDERER3D=pica` (the default in the 3DS build). Per frame: the
 geometry engine's polygons (screen positions with 4 fractional bits, depth, w, colour, texture coordinates) into a
 `linearAlloc`'d vertex buffer; a vertex shader that passes them on; one draw call per run of polygons with the same
@@ -408,3 +408,15 @@ the exheader can enable core 2 on the New 3DS (1.3).
     3D rasteriser (`draw_polygon`, `interp` with a 64-bit division per pixel: the ARM11 has no divide instruction);
     a few in SD card reads; the game's own code hardly. Azahar's speed isn't the hardware's (T2.8 measures that),
     but the 3D rasteriser on the CPU is out of the question: phase 3 next.
+- 2026-10-28: T3.2, first version: `gpu3d/gpu3d_pica.c` draws the geometry engine's polygons on the PICA200 at
+  256x192 and reads colour, depth and the fog flag (stencil bit 7) back into the software rasteriser's buffers; its
+  fog pass and the CPU composite follow (`ACWW_RENDERER3D=pica`, the 3DS's default; `own` for the CPU). In Azahar
+  3-4.5 frames a second (was 0.6). Frame 300 of the attract demo against the PC's CPU picture: the 2D screen
+  identical, the 3D one close (mean difference 14 of 255, 13684 pixels differ by more than 8). Found:
+  - the GPU's texture v runs from the bottom: v = 1 is the first row in memory (`o->tc[1] = 1 - t / h`); the
+    framebuffer read back by the display transfer comes top row first;
+  - the depth is not reversed (citro3d's own set-up is): the GPU computes depth in 24-bit floats, fine near 0 and
+    coarse near 1, and the DS's depths are small; depth test "equal" gets the DS's margin of 0x200 (moved nearer,
+    then less-or-equal); the W-buffer uses the GPU's W-buffer mode (`C3D_DepthMap(false, ...)`).
+  - Open: the window left of the house in that frame is missing (a hole to the clear colour: some polygons not
+    drawn - which and why is to be found); no anti-aliasing; the composite is still the CPU's at 256x192 (T3.3).

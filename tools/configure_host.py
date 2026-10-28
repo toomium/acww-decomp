@@ -358,7 +358,7 @@ if WGPU and MAC:
                  " -framework Foundation -framework IOKit -lobjc")
 
 # the 3DS runtime's files that use libctru's structures (built with its enum size: HOST_FLAGS)
-N3DS_NATIVE = ("plat_3ds.c", "frontend_3ds.c")
+N3DS_NATIVE = ("plat_3ds.c", "frontend_3ds.c", "gpu3d_pica.c")
 
 MWCC_FLAG_MAP = {("-char", "unsigned"): "-funsigned-char"}
 
@@ -437,6 +437,15 @@ def main():
                 "-O2" if "gpu2d" in s.parts or "gpu3d" in s.parts else None
             n.build(o, rule, str(s), variables={"flags": fl} if fl else None, implicit=implicit)
             objs.append(o)
+        if N3DS:
+            # gpu3d_pica.c's vertex shader: assembled by picasso, embedded by bin2s (gpu3d_pica_shbin, _size)
+            shbin = str(build / "gen" / "gpu3d_pica.shbin")
+            n.rule("picasso", f"{DKP}/tools/bin/picasso -o $out $in", description="PICASSO $out")
+            n.build(shbin, "picasso", "modern/host/gpu3d/gpu3d_pica.v.pica")
+            n.rule("bin2s", f"{DKP}/tools/bin/bin2s -a 4 $in > $out", description="BIN2S $out")
+            n.build(shbin + ".s", "bin2s", shbin)
+            n.build(shbin + ".o", "hostas_S", shbin + ".s")
+            objs.append(shbin + ".o")
         # The data between the decomp's units (gap objects of the DS build's delinking): generated once from that
         # build, which this branch no longer runs, and kept in modern/gen/. --regen-gen rebuilds it from
         # build/usa/delinks.

@@ -46,6 +46,8 @@ const uint32_t *gpu3d_lines(void);
 // given (a WGPUDevice and WGPUQueue) at `scale` times the DS's resolution; readback: gpu3d_lines has the picture
 // (read back every frame, at scale 1), else only gpu3d_wgpu_picture. 0 if this build can't
 int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback);
+// the polygons drawn by the 3DS's GPU (gpu3d_pica.c) into the rasteriser's buffers; 0 if this build can't
+int gpu3d_use_pica(void);
 // the picture the frame shows, on the GPU: a WGPUTextureView of an R32Uint texture of 256 x 192 times the scale, in
 // gpu3d_lines' format
 void *gpu3d_wgpu_picture(void);
