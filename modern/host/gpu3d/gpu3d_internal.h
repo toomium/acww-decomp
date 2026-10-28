@@ -65,6 +65,7 @@ typedef struct G3RenderState {
 extern G3RenderState gG3Render;
 extern const uint8_t *const *gG3Banks;  // VRAM banks A-I (gpu3d_frame)
 extern u8 gG3VramCnt[9];
+extern int gG3Diagnostics;  // (gpu3d_set_diagnostics: the comparisons' reports want more kept)
 extern u32 gG3VramGeneration;  // (gpu3d_vram_generation)
 
 // gpu3d_raster.c

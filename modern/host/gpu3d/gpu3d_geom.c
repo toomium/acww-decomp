@@ -67,6 +67,15 @@ static int sFeaturesOn = -1;
 void g3_feature(int id) {
     if (sFeaturesOn && !sFeatureFrame[id]) sFeatureFrame[id] = sFrame + 1;
 }
+// (the check inline: the census is mostly off, and some features are noted for every vertex)
+#define g3_feature(id) (sFeaturesOn ? g3_feature(id) : (void)0)
+
+// a 64-bit division as C's, in 32 bits when both fit (the same quotient: 64-bit divisions are many times slower on
+// the 3DS's CPU, which has no divide instruction at all)
+static inline s64 div64(s64 a, s64 b) {
+    if (a == (s32)a && b == (s32)b && b != -1) return (s32)a / (s32)b;
+    return a / b;
+}
 
 // ---- the command FIFO: a 4-entry pipe in front of a 256-entry FIFO (GXSTAT counts the FIFO's entries)
 typedef struct { u8 cmd; u32 param; } Entry;
@@ -447,8 +456,8 @@ static void lighting(void) {
 
 // ---- polygons
 static s64 floor_div(s64 a, s64 b) {
-    s64 q = a / b;
-    return (a % b != 0 && (a < 0) != (b < 0)) ? q - 1 : q;
+    s64 q = div64(a, b);
+    return (q * b != a && (a < 0) != (b < 0)) ? q - 1 : q;
 }
 // the viewport transform (GBATEK "DS 3D Viewport"): x = (x + w) * width / 2w + x1, y the same from the bottom; W and
 // the coordinate are first shifted right once when W has more than 16 bits
@@ -459,10 +468,13 @@ static void screen_position(G3Vertex *v) {
     s64 ws = w >> s;
     if (ws == 0) ws = 1;  // (a point at the eye)
     s64 nx = ((s64)v->pos[0] + w) >> s, ny = (-(s64)v->pos[1] + w) >> s;
-    v->x = (s32)(floor_div(nx * sViewport[4], ws * 2) + sViewport[0]) & 0x1ff;
-    v->y = (s32)(floor_div(ny * sViewport[5], ws * 2) + sViewport[3]) & 0x1ff;  // (192 for the bottom edge: no 8-bit wrap)
-    v->hx = (s32)(floor_div(nx * sViewport[4] * 16, ws * 2) + sViewport[0] * 16) & 0x1fff;
-    v->hy = (s32)(floor_div(ny * sViewport[5] * 16, ws * 2) + sViewport[3] * 16) & 0x1fff;
+    // (the whole pixels from the 1/16 ones: floor(floor(16 r) / 16) = floor(r), so two divisions, not four)
+    s64 hx = floor_div(nx * sViewport[4] * 16, ws * 2) + sViewport[0] * 16;
+    s64 hy = floor_div(ny * sViewport[5] * 16, ws * 2) + sViewport[3] * 16;
+    v->x = (s32)(hx >> 4) & 0x1ff;
+    v->y = (s32)(hy >> 4) & 0x1ff;  // (192 for the bottom edge: no 8-bit wrap)
+    v->hx = (s32)hx & 0x1fff;
+    v->hy = (s32)hy & 0x1fff;
     v->screenDone = 1;
 }
 
@@ -474,7 +486,7 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
     s64 dout = (s64)out->pos[3] - sign * (s64)out->pos[comp];
     s64 den = din - dout;
     // from the vertex outside towards the one inside, truncated towards zero (dout <= 0 < din: -dout / den >= 0)
-#define LERP(a, b) ((s32)((b) + (((s64)(a) - (b)) * -dout) / den))
+#define LERP(a, b) ((s32)((b) + div64(((s64)(a) - (b)) * -dout, den)))
     for (int i = 0; i < 4; i++) o->pos[i] = LERP(in->pos[i], out->pos[i]);
     o->pos[comp] = sign * o->pos[3];
     {   // (the 5-bit colours from the vertex inside, rounded up; when that vertex is the crossing of the same edge
@@ -491,7 +503,7 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
             s64 a = ic[i] >> 4, b = out->color[i] >> 4, base, diff, n;
             if (a >= b) base = a, diff = a - b, n = cdin;
             else base = b, diff = b - a, n = cden - cdin;  // (towards the inside vertex: -dout)
-            s64 t = (n * 65536 + cden - 1) / cden;
+            s64 t = div64(n * 65536 + cden - 1, cden);
             s64 v = base * 65536 - diff * t;
             s32 c = (s32)(-((-v) >> 16));
             o->color[i] = c ? c << 4 | 0xf : 0;
@@ -721,8 +733,8 @@ static void submit_polygon(void) {
             poly->z[i] = (s32)(z > 0xffffff ? 0xffffff : z);
         }
     }
-    poly->norig = nv;
-    memcpy(poly->orig, v, sizeof(G3Vertex) * nv);
+    poly->norig = gG3Diagnostics ? nv : 0;  // (the vertices before clipping: for the comparisons' reports only)
+    if (gG3Diagnostics) memcpy(poly->orig, v, sizeof(G3Vertex) * nv);
     poly->vtop = vtop;
     poly->vbottom = vbot;
     poly->ytop = ytop;

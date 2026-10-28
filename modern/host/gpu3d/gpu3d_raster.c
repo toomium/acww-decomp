@@ -646,4 +646,5 @@ int gpu3d_pixel_polygon(int x, int y, Gpu3dPolyInfo *info) {
     info->translucent = p->translucent;
     return 1;
 }
-void gpu3d_set_diagnostics(int on) { sDiag = on; }
+int gG3Diagnostics;
+void gpu3d_set_diagnostics(int on) { sDiag = gG3Diagnostics = on; }
