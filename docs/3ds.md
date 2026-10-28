@@ -125,9 +125,9 @@ added `-fpcc-struct-return` (as the i386 build), and again without it (as D2 dec
 - **D7: the New 3DS first.** The Old 3DS is best effort (T4.4). The game's own code is cheap (it ran at 67 MHz);
   the cost is the runtime around it (register calls, virtual time, VRAM windows, the 2D layers, the geometry
   engine). How fast it runs is **unverified** until T2.8.
-- **D8: checking.** ARM32 behaviour is checked against the x86-64 reference with the existing tools (screenshots,
-  sound, RAM hashes: docs/host.md) in an armhf **Linux** build under qemu (phase 1), before any 3DS is involved. On
-  the 3DS: Azahar for quick runs, real hardware for speed and anything Azahar gets wrong.
+- **D8: checking.** The 3DS build's headless runs in Azahar (screenshots and sound to the SD card) are compared with
+  the x86-64 reference's (`tools/host_oracle.sh`'s frames); real hardware for speed and anything Azahar gets wrong.
+  An armhf Linux build under qemu (T1.3-T1.5) only if a difference needs the PC's tools to find.
 
 ## 3. New files
 
@@ -149,18 +149,14 @@ meta/3ds/icon.png        the program's 48x48 icon (own artwork, not the game's)
 
 ### Phase 0: the reference
 
-**T0.1 The PC build's crash.** Reproduced here (1.1) with the oracle's play run:
-```
-mkdir -p /tmp/play
-ACWW_ROM="$HOME/Dokumente/Animal Crossing - Wild World (USA) (Rev 1).nds" ORACLE_OUT=/tmp/play \
-    tools/host_oracle.sh build/host64_usa/acww play-raw    # then /tmp/play/log.txt
-```
-Ask the user whether this is their crash (which build, renderer, point in the game, output). Then find the cause
-(`addr2line -f -C -i -e build/host64_usa/acww <offsets>` turns the report's offsets into lines; the null vtable
-belongs to one of the three 0x30-byte members at 0x120-0x1b0 of an `EffectModel`, which its implicit destructor
-destroys: find which object was never constructed or was overwritten, e.g. with `ACWW_WATCH`). Upstream's checks
-pass the play run, so compare what differs here, the compiler first (GCC 13.3 here; upstream's notes mention GCC
-15). Fix it in its own commit (a pull request to upstream). Done when the play run reaches frame 25000.
+**T0.1 The PC build's crash. Done (2026-10-28): build with GCC 14 or newer.** The crash at "New Game" (1.1) is
+the compiler's: `EffectSplProc::onCreate` zeroes its model groups byte by byte (`MI_CpuFill8(modelGroups, 0,
+0x14c0)`, `src/main/unk_0208f268.cpp`, as the DS did), their animations' vtable pointers too. GCC 13.3 destroys the
+arrays of `ModelAnim` through those pointers (a call through 0 when the process ends); GCC 14.2 and devkitARM's GCC
+16.1 call `ModelAnim::~ModelAnim()` directly, as mwcc did. The game code stays as it is (the user's decision):
+`sudo apt install gcc-14 g++-14`, then `python3 tools/configure_host.py --cc gcc-14` (the game and the runtime's C;
+the runtime's C++ and the link stay `g++`). With it the play run reaches frame 25000 and the save and continue
+scripts work (the player in town in front of the house).
 
 **T0.2 Reference captures.** There are none on this machine. Record them from the x86-64 build with the CPU
 renderers (what `tools/host_oracle.sh` compares; it sets that up itself):
@@ -171,12 +167,18 @@ ACWW_ROM="$HOME/Dokumente/Animal Crossing - Wild World (USA) (Rev 1).nds" ORACLE
 (The script sets `ACWW_FIRMWARE` to `~/acww/ref/firmware_generated.bin`; that file doesn't exist here, and a
 missing firmware image falls back to the built-in one, `pxi7.c:475`: the captures are made with that.) Checked
 2026-10-28: `record` and then `quick` (frames 2500, 8000 and the sound identical) work; the play captures are
-incomplete until T0.1 is fixed: record again after it. Then run `quick` and `play` against them with the same
+incomplete with GCC 13 (T0.1): record them with the GCC 14 build. Then run `quick` and `play` against them with the same
 variables: both must pass. Also write a RAM hash file of the play run
 (`ACWW_RAMHASH`, docs/host.md) to compare the ARM32 builds with frame by frame. Done when both checks pass and the
 files are written; note the directory here.
 
-### Phase 1: ARM32 without a 3DS
+### Phase 1: shared ARM32 fixes
+
+T1.1 and T1.2 are needed for the 3DS build and are done first. T1.3-T1.5 (an armhf Linux build under qemu) are
+**optional**, decided 2026-10-28: the 3DS build is compared with the PC build directly (headless runs in Azahar
+with `ACWW_SHOT` / `ACWW_WAV` to the SD card, the same frames as `tools/host_oracle.sh`). Do T1.3-T1.5 only if the
+3DS build behaves differently and it is unclear whether the cause is ARM32 code or the 3DS platform layer: under
+qemu the ARM32 game runs on Linux, with the PC's tools (RAM hashes and dumps) and no 3DS code involved.
 
 **T1.1 One set of integer types (shared, upstream PR).** Change the runtime's typedefs of `u8`/`u16`/`u32`/`s32` in
 `host.h`, `gpu2d/gpu2d_internal.h`, `gpu3d/gpu3d_internal.h`, `sdk.c` and `wgpu_display.c` to the game's
@@ -194,9 +196,10 @@ like the arm64 one: push r4-r11, lr and d8-d15 (AAPCS's callee-saved registers),
 `host_coro_prepare`, the matching initial frame (sp 8-byte aligned at the call, the AAPCS rule). In `os.c`'s
 `host_dump_threads`, the frame pointer's slot for ARM32 (`r11` in the saved frame). A test like
 `tests/coro_a64_test.c` (callee-saved registers survive a switch, arguments arrive, the stack is aligned), built for
-ARM32 and run under `qemu-arm` (T1.3's toolchain). Done when the test passes.
+ARM32 and run under `qemu-arm` if T1.3's toolchain is there; otherwise the 3DS build's game threads are the test
+(they switch from the first frame). Done when the test passes or the 3DS build reaches the title.
 
-**T1.3 `--arch arm` (armhf Linux, shared, upstream PR).** Install `gcc-arm-linux-gnueabihf
+**T1.3 (optional) `--arch arm` (armhf Linux, shared, upstream PR).** Install `gcc-arm-linux-gnueabihf
 g++-arm-linux-gnueabihf qemu-user` (apt; the user does it, it needs sudo). In `tools/configure_host.py`, an `arm`
 arch like `aarch64` (read its branch: `A64`, `--cross`, `--qemu`, `ACWW_RUNNER`): `arm-linux-gnueabihf-gcc`,
 `-march=armv6k -mfpu=vfp -mfloat-abi=hard`, the 32-bit game flags of D2, `frontend_none.c`, no melonDS, no
@@ -204,14 +207,14 @@ wgpu, `build_host_arm.ninja`, `build/hostarm_<version>/acww`, and the `coro-a32-
 and `qemu-arm -L /usr/arm-linux-gnueabihf build/hostarm_usa/acww <rom>` reaches the title headless
 (`ACWW_HEADLESS=1 ACWW_SHOT=...`).
 
-**T1.4 Portability check for ARM32.** Install libclang for Python (1.1). Add an `arm32` target to
+**T1.4 (optional) Portability check for ARM32.** Install libclang for Python (1.1). Add an `arm32` target to
 `tools/host_portcheck.py`'s list (`--target=arm-none-eabi -mfloat-abi=hard -march=armv6k` plus the game flags) and
 run it. Fix what it reports beyond the baseline (in the game: portability fixes, own commits). Done when it reports
 0 for `arm32`. A place to look in T1.5: the runtime's own C files are compiled without `-fsigned-char` (only the
 game's are), and plain `char` is unsigned on ARM; the aarch64 build has the same property and plays like the
 reference, so it is not a known bug.
 
-**T1.5 The armhf build plays like the reference.** Under qemu with `ACWW_RUNNER="qemu-arm -L
+**T1.5 (optional) The armhf build plays like the reference.** Under qemu with `ACWW_RUNNER="qemu-arm -L
 /usr/arm-linux-gnueabihf"`: the T0.2 `quick` and `play` checks, and the town, save and continue scripts
 (docs/host.md). Where it differs: `ACWW_RAMHASH` against T0.2's file to find the first frame, `ACWW_RAMDUMP` to
 find the address (docs/host.md "Finding where two builds part"). Every fix is a portability fix in its own commit.
@@ -376,7 +379,8 @@ the exheader can enable core 2 on the New 3DS (1.3).
 - **Memory**: 20 MB of static data before any heap, texture cache, render targets and stacks (512 KB a game thread,
   `os.c`); how much an application gets is unverified (T2.2). If it is too little: the 2D renderer's and the
   geometry engine's buffers are sized for the worst case and can shrink.
-- **ARM32 behaviour** (T1.5): checked under qemu before the 3DS.
+- **ARM32 behaviour**: checked by comparing the 3DS build's headless runs with the PC's; qemu (T1.3-T1.5) if
+  a difference needs it.
 - **Composite without fragment shaders** (T3.3): kind 1 needs a per-pixel decision on the 3D picture's coverage;
   if the PICA can't do it cleanly, the fallback is compositing on the CPU at 256x192 with the PICA's 3D read back
   (lower resolution, still the PICA's speed).
@@ -385,3 +389,4 @@ the exheader can enable core 2 on the New 3DS (1.3).
 
 - 2026-10-28: plan written; the checks of section 1 done (trial build in a scratch directory, nothing committed);
   the PC build's crash reproduced (T0.1).
+- 2026-10-28: T0.1 done: GCC 14. The armhf/qemu step made optional (phase 1).
