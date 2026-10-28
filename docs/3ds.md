@@ -180,7 +180,7 @@ with `ACWW_SHOT` / `ACWW_WAV` to the SD card, the same frames as `tools/host_ora
 3DS build behaves differently and it is unclear whether the cause is ARM32 code or the 3DS platform layer: under
 qemu the ARM32 game runs on Linux, with the PC's tools (RAM hashes and dumps) and no 3DS code involved.
 
-**T1.1 One set of integer types (shared, upstream PR).** Change the runtime's typedefs of `u8`/`u16`/`u32`/`s32` in
+**T1.1 One set of integer types (shared, upstream PR). Done 2026-10-28.** Change the runtime's typedefs of `u8`/`u16`/`u32`/`s32` in
 `host.h`, `gpu2d/gpu2d_internal.h`, `gpu3d/gpu3d_internal.h`, `sdk.c` and `wgpu_display.c` to the game's
 (`unsigned char`, `unsigned short`, `unsigned int`, `signed int`), and the runtime's own headers that pass pixel and
 register buffers (`render.h`, `gpu2d/gpu2d.h`, `gpu3d/...`, `frontend.h` where its users mix them) consistently to
@@ -190,7 +190,8 @@ for `u32`; `PRIu32` only for real `uint32_t`). Replace `timespec_get` in `gpu3d_
 `-DHOST -Iinclude -DHOST_DEBUG_POSIX=0`) without errors or warnings, and the x86-64 build passes the T0.2 checks
 unchanged. Done when both hold.
 
-**T1.2 ARM32 coroutine switch (shared, upstream PR).** In `coro_switch.S`, a `#elif defined(__arm__)` variant
+**T1.2 ARM32 coroutine switch (shared, upstream PR). Done 2026-10-28** (no separate test: the 3DS build's
+game threads run). In `coro_switch.S`, a `#elif defined(__arm__)` variant
 like the arm64 one: push r4-r11, lr and d8-d15 (AAPCS's callee-saved registers), store sp in `*save`, load sp from
 `to`, pop, return; `host_coro_boot` calls `fn(arg)` from two of the saved registers. In `coro.c`'s
 `host_coro_prepare`, the matching initial frame (sp 8-byte aligned at the call, the AAPCS rule). In `os.c`'s
@@ -223,7 +224,7 @@ pixels from floating-point rounding, write down where and why instead of forcing
 
 ### Phase 2: on the 3DS, CPU renderers
 
-**T2.1 `--os 3ds` in configure_host.py.** The compilers from `$DEVKITARM/bin` (`DEVKITPRO`/`DEVKITARM` from the
+**T2.1 `--os 3ds` in configure_host.py. Done 2026-10-28.** The compilers from `$DEVKITARM/bin` (`DEVKITPRO`/`DEVKITARM` from the
 environment, as devkitPro sets them; fail with a clear message without them), the flags of D2, include path
 `$DEVKITPRO/libctru/include`, the link of D2, then `smdhtool --create "<title>" "<description>" "<author>"
 meta/3ds/icon.png acww.smdh` and `3dsxtool acww.elf acww.3dsx --smdh=acww.smdh` (the commands of
@@ -233,7 +234,7 @@ meta/3ds/icon.png acww.smdh` and `3dsxtool acww.elf acww.3dsx --smdh=acww.smdh` 
 and `guards.c` with `HOST_DEBUG_POSIX` 0 and no `HOST_GUARDS` (as on Windows: configure_host.py's `WIN` branch
 shows how). Define `HOST_FRONTEND_3DS`. Done when `acww.3dsx` is built.
 
-**T2.2 `plat_3ds.c`.** Every function of `plat.h`, with `plat_posix.c` as the model; for each libctru call, look
+**T2.2 `plat_3ds.c`. Done 2026-10-28.** Every function of `plat.h`, with `plat_posix.c` as the model; for each libctru call, look
 it up in the header first:
 - time: `svcGetSystemTick()` to nanoseconds (`SYSCLOCK_ARM11` ticks a second); sleeping: `svcSleepThread`
   (nanoseconds);
@@ -251,26 +252,27 @@ it up in the header first:
 Done when the program starts in Azahar and runs headless (`ACWW_HEADLESS=1` in acww.cfg, `ACWW_SHOT` to the SD
 card, `ACWW_EXIT_FRAME`) to the title, and the memory numbers for Azahar's Old and New 3DS are written in 1.3.
 
-**T2.3 The ROM from the SD card (D4).** `card.c`: open the file once; `host_card_read` and `card_read_data` read
+**T2.3 The ROM from the SD card (D4). Done 2026-10-28.** `card.c`: open the file once; `host_card_read` and `card_read_data` read
 through a small cache of 512-byte pages (`fseek` + `fread`; the SDK reads 0x200-byte pages, `card.c:1-3`).
 `host_rom` keeps its meaning for `main.c`'s header copy (only the first 0x170 bytes). On the PC builds the
 behaviour is the same (also through the cache, or keep `host_plat_read_file` there: whichever is simpler, the same
 results either way). Fix the comment's 16 MB. Done when the T0.2 checks pass on x86-64 and the 3DS build reaches
 the title with the ROM not in memory.
 
-**T2.4 `frontend_3ds.c`: picture.** `frontend_backend_open` returns a plain `AcwwShm` (as `frontend_sdl.c` does);
+**T2.4 `frontend_3ds.c`: picture. Written 2026-10-28, not yet tried.** `frontend_backend_open` returns a plain `AcwwShm` (as `frontend_sdl.c` does);
 `frontend_backend_frame` shows `pixels` (top screen, then bottom, `0x00RRGGBB`). First version, the simplest that
 works: the two 256x192 pictures converted into the framebuffers (`gfxInitDefault`, `gfxGetFramebuffer`, top
 centred in 400x240, bottom in 320x240; the framebuffers are column-major, rotated, see
 `examples/3ds/graphics/bitmap`), `gfxFlushBuffers`, `gfxSwapBuffers`, `gspWaitForVBlank`. Done when the attract
 demo is seen in Azahar.
 
-**T2.5 `frontend_3ds.c`: input.** `hidScanInput` / `hidKeysHeld` to `keys` (`frontend.h`'s bit order: A, B,
+**T2.5 `frontend_3ds.c`: input. Written 2026-10-28, not yet tried.** `hidScanInput` / `hidKeysHeld` to `keys` (`frontend.h`'s bit order: A, B,
 Select, Start, Right, Left, Up, Down, R, L, X, Y; the circle pad as the D-pad), `hidTouchRead` to
 `touch_x/y/down`, mapped from the bottom screen's 320x240 to the centred 256x192 (outside it: no touch).
 `aptMainLoop()` returning false sets `quit`. Done when the intro can be played to the town in Azahar.
 
-**T2.6 `frontend_3ds.c`: sound.** `ndspInit` (fails without `sdmc:/3ds/dspfirm.cdc`: tell the user then, and play
+**T2.6 `frontend_3ds.c`: sound. Written 2026-10-28 (four 1024-frame wave buffers refilled
+once a frame, no rate adjustment yet), not yet tried.** `ndspInit` (fails without `sdmc:/3ds/dspfirm.cdc`: tell the user then, and play
 on silently), one stereo PCM16 channel at `ACWW_AUDIO_RATE` (32728 Hz), a few `ndspWaveBuf`s in `linearAlloc`'d
 memory refilled from the `audio` ring (`audio_read` / `audio_write`, as `frontend_sdl.c`'s `audio_callback` reads
 it, including holding the queue level). `examples/3ds/audio/streaming` shows the wave buffer cycle. Done when music
@@ -390,3 +392,19 @@ the exheader can enable core 2 on the New 3DS (1.3).
 - 2026-10-28: plan written; the checks of section 1 done (trial build in a scratch directory, nothing committed);
   the PC build's crash reproduced (T0.1).
 - 2026-10-28: T0.1 done: GCC 14. The armhf/qemu step made optional (phase 1).
+- 2026-10-28: the 3DS build (`python3 tools/configure_host.py --os 3ds && ninja -f build_host_3ds.ninja`) runs in
+  Azahar: headless (`acww.cfg`: `ACWW_HEADLESS=1`, `ACWW_FAST=1`, `ACWW_SHOT=300:sdmc:/3ds/acww/a-300.ppm`) its
+  frame 300 (the attract demo's 3D town) is byte for byte the x86-64 build's. Found on the way:
+  - The runtime takes the game's 32-bit enums (`-fno-short-enums`, arm-none-eabi's default is the smallest size);
+    the files that use libctru's structures keep the library's (configure_host.py `N3DS_NATIVE`).
+  - GCC folds `page + (addr - 0x04000000)` into the constant `page - 0x04000000`, an address outside the program
+    that a .3dsx can't relocate: Azahar refused the program ("A generic load error", `Failed to load ROM (Error
+    1)`). Fixed with an empty asm in `hw.c` and `gpu2d.c` (`opaque`); `tools/host_3dsx_check.py` checks every
+    build's relocations (the 3dsx rule fails on one).
+  - Azahar's New 3DS: application memory 96 MB, heap 64 MB, linear heap 32 MB (`osGetMemRegionFree` reports
+    nonsense there). The 32 MB ROM didn't fit beside the program: T2.3.
+  - Speed in Azahar: about 0.6 frames a second (unpaced). Samples with Azahar's GDB stub (`-g <port>`,
+    `arm-none-eabi-gdb`, interrupted every 4 s): most in the CPU renderers - the 2D layers (`render_line`) and the
+    3D rasteriser (`draw_polygon`, `interp` with a 64-bit division per pixel: the ARM11 has no divide instruction);
+    a few in SD card reads; the game's own code hardly. Azahar's speed isn't the hardware's (T2.8 measures that),
+    but the 3D rasteriser on the CPU is out of the question: phase 3 next.

@@ -4,6 +4,7 @@
 // - frontend_viewer.c (otherwise: the i386 build, which can't load the system's 64-bit SDL): the block is shared
 //   memory and the 64-bit viewer program (modern/host/viewer) shows it;
 // - frontend_none.c (HOST_FRONTEND_NONE: a 64-bit build without SDL2, e.g. aarch64): none, always headless.
+// - frontend_3ds.c (HOST_FRONTEND_3DS): the Nintendo 3DS's screens, buttons and sound (docs/3ds.md).
 // Plain fixed-size types: the viewer uses this header too.
 #ifndef HOST_FRONTEND_H
 #define HOST_FRONTEND_H
