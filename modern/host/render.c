@@ -568,16 +568,17 @@ int render_check_gpu2d(void) {
 }
 
 // ACWW_FPS: also the renderers' share of the time, every 120 frames (the 2D one with the game's H-blank work)
-static u64 sTime2d, sTime3d;
-static void render_timing(u64 t0, u64 t1, u64 t2) {
+static u64 sTime2d, sTime3d, sTimeComp;
+static void render_timing(u64 t0, u64 t1, u64 t2, u64 t3) {
     static int on = -1;
     if (on < 0) on = getenv("ACWW_FPS") != 0;
     if (!on) return;
-    sTime2d += t1 - t0, sTime3d += t2 - t1;
+    sTime2d += t1 - t0, sTime3d += t2 - t1, sTimeComp += t3 - t2;
     if (host_frame() % 120 == 0) {
-        fprintf(stderr, "render: frame %llu: 2D %.1f ms, 3D %.1f ms a frame\n", (unsigned long long)host_frame(),
-                (double)sTime2d / 120e6, (double)sTime3d / 120e6);
-        sTime2d = sTime3d = 0;
+        fprintf(stderr, "render: frame %llu: 2D %.1f ms, 3D %.1f ms, compositing %.1f ms a frame\n",
+                (unsigned long long)host_frame(), (double)sTime2d / 120e6, (double)sTime3d / 120e6,
+                (double)sTimeComp / 120e6);
+        sTime2d = sTime3d = sTimeComp = 0;
     }
 }
 
@@ -647,8 +648,9 @@ void render_frame(void) {
     u64 t1 = host_plat_time_ns();
     void *texture3d = sPica && sOwn3d ? gpu3d_pica_picture() : NULL;  // (the last frame's, as lines3d)
     if (sGpu3d) gpu3d_run_frame();
+    u64 t2 = host_plat_time_ns();
     if (sPica) pdisp_frame(texture3d, sOwn3d ? lines3d : NULL);  // (the 3D picture the 2D renderer would have shown)
-    render_timing(t0, t1, host_plat_time_ns());
+    render_timing(t0, t1, t2, host_plat_time_ns());
     if (sCompare && !sSelftest) {
         render_compare("frame", host_frame());
         render_compare_3d("frame", host_frame());

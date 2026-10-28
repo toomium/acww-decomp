@@ -229,15 +229,20 @@ static void window_vertical(Engine *e, int line) {
         else if ((line & 0xff) == v >> 8) e->winActive[w] |= 1;
     }
 }
-static void window_line(Engine *e, const ObjLine *obj, u8 *mask) {
+// (region: when not NULL, also the window each pixel is in: 0 outside, 1 window 0, 2 window 1, 3 the OBJ window)
+static void window_line(Engine *e, const ObjLine *obj, u8 *mask, u8 *region) {
     u32 dispcnt = reg32(e, REG_DISPCNT);
     if (!(dispcnt & 0xe000)) { memset(mask, 0x3f, SCREEN_W); return; }
     u16 winin = reg16(e, REG_WININ), winout = reg16(e, REG_WINOUT);
     memset(mask, winout & 0x3f, SCREEN_W);
+    if (region) memset(region, 0, SCREEN_W);
     if (dispcnt & 0x8000) {
         gpu2d_feature(e, F_WINOBJ);
         for (int x = 0; x < SCREEN_W; x++)
-            if (obj->window[x]) mask[x] = winout >> 8 & 0x3f;
+            if (obj->window[x]) {
+                mask[x] = winout >> 8 & 0x3f;
+                if (region) region[x] = 3;
+            }
     }
     for (int w = 1; w >= 0; w--) {  // (window 0 over window 1)
         if (!(dispcnt & 0x2000u << w)) continue;
@@ -248,7 +253,10 @@ static void window_line(Engine *e, const ObjLine *obj, u8 *mask) {
         for (int x = 0; x < SCREEN_W; x++) {
             if (x == x2) e->winActive[w] &= ~2;
             else if (x == x1) e->winActive[w] |= 2;
-            if (e->winActive[w] == 3) mask[x] = in;
+            if (e->winActive[w] == 3) {
+                mask[x] = in;
+                if (region) region[x] = (u8)(w + 1);
+            }
         }
     }
 }
@@ -370,7 +378,7 @@ static void compose_line(Engine *e, int line, const u32 *line3d, u32 *dst) {
     u32 dispcnt = reg32(e, REG_DISPCNT);
     const ObjLine *obj = &e->obj;
     u8 mask[SCREEN_W];
-    window_line(e, obj, mask);
+    window_line(e, obj, mask, NULL);
     obj_mosaic_x(e, &e->obj);
     int has3d = e->num == 0 && (dispcnt & 8) && (dispcnt & 0x100) && line3d;
     // the 3D layer deferred: composited as if its pixels were transparent, and where one could show, how it would
@@ -479,14 +487,14 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
     u32 dispcnt = reg32(e, REG_DISPCNT);
     if (!sTo5551[1])
         for (u32 c = 0; c < 0x8000; c++) sTo5551[c] = (u16)((c & 31) << 11 | (c >> 5 & 31) << 6 | (c >> 10 & 31) << 1 | 1);
-    u8 mask[SCREEN_W];
-    window_line(e, &e->obj, mask);
+    u8 mask[SCREEN_W], region[SCREEN_W];
+    window_line(e, &e->obj, mask, region);
     obj_mosaic_x(e, &e->obj);
     int is3d = e->num == 0 && (dispcnt & 8);
     if (is3d && (dispcnt & 0x100)) gpu2d_feature(e, F_3D);
     for (int n = 0; n < 4; n++) {
         ls->prio[n] = reg16(e, REG_BGCNT + 2 * (u32)n) & 3;
-        if (!(dispcnt & 0x100u << n) || (n == 0 && is3d)) continue;
+        if (!(dispcnt & 0x100u << n) || (n == 0 && is3d) || (ls->gpuBg >> n & 1)) continue;
         u16 *d = sLayers->bg[e->num][n] + line * SCREEN_W;
         const u16 *s = e->bg[n];
         for (int x = 0; x < SCREEN_W; x++)
@@ -503,8 +511,8 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
         }
     }
     if (dispcnt & 0xe000) {
-        u16 *d = sLayers->fx[e->num] + line * SCREEN_W;
-        for (int x = 0; x < SCREEN_W; x++) d[x] = mask[x] & 0x20 ? 0 : 1;
+        u32 *d = sLayers->region[e->num] + line * SCREEN_W;
+        for (int x = 0; x < SCREEN_W; x++) d[x] = 63u + 64u * region[x];
     }
 }
 
@@ -523,8 +531,28 @@ static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
         if (mode == 0) gpu2d_feature(e, F_DISPLAY_OFF);
         if (mode >= 2) gpu2d_feature(e, mode == 2 ? F_DISPLAY_VRAM : F_DISPLAY_FIFO);
         if (dispcnt & 0x80) gpu2d_feature(e, F_FORCED_BLANK);
+        ls->winin = reg16(e, REG_WININ), ls->winout = reg16(e, REG_WINOUT);
+        ls->gpuBg = 0;
+        for (int n = 0; n < 4; n++) {
+            u16 cnt = reg16(e, REG_BGCNT + 2 * (u32)n);
+            ls->bgcnt[n] = cnt;
+            ls->bghofs[n] = reg16(e, REG_BGHOFS + 4 * (u32)n) & 0x1ff;
+            ls->bgvofs[n] = reg16(e, REG_BGVOFS + 4 * (u32)n) & 0x1ff;
+            int kind = gpu2d_bg_kind(e, n);
+            ls->bgKind[n] = (u8)kind;
+            // (the GPU's: text BGs in the standard palette, affine BGs; no mosaic)
+            if ((kind == 1 && !((cnt & 0x80) && (dispcnt & 1u << 30))) || kind == 2)
+                if (!(cnt & 0x40)) ls->gpuBg |= (u8)(1 << n);
+        }
+        for (int i = 0; i < 2; i++) {
+            u32 r = REG_BG2PA + 0x10 * (u32)i;
+            for (int k = 0; k < 4; k++) ls->affine[i][k] = (int16_t)reg16(e, r + 2 * (u32)k);
+            sLayers->ref[e->num][line][2 * i] = e->refX[i] + ls->affine[i][1] * (line - e->refLine);
+            sLayers->ref[e->num][line][2 * i + 1] = e->refY[i] + ls->affine[i][3] * (line - e->refLine);
+        }
         if (!(e->num == 1 && !(sPowCnt & 0x200)) && !(dispcnt & 0x80)) {
-            for (int n = 0; n < 4; n++) gpu2d_render_bg_line(e, n, line);
+            for (int n = 0; n < 4; n++)
+                if (!(ls->gpuBg >> n & 1)) gpu2d_render_bg_line(e, n, line);
             layers_line(e, line, ls);
         }
         obj_mosaic_y(e, line);
@@ -722,6 +750,11 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
     // to the screens: engine A on the top screen if POWCNT1 bit 15 is set
     if (sLayers) {
         sLayers->topEngine = (sPowCnt & 0x8000) ? 0 : 1;
+        for (int n = 0; n < 2; n++) {
+            sLayers->bgGran[n] = sEngine[n].bgGran;
+            sLayers->bgMask[n] = sEngine[n].bgMask;
+            sLayers->palette[n] = sEngine[n].palette;
+        }
         sFrame++;
         return;
     }

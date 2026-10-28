@@ -25,10 +25,17 @@ extern "C" {
 #endif
 
 // Gpu2dFrameInput.layers (the 3DS: its GPU composites, pica_display.c): instead of compositing, each line's layers
-// as pixels in the 3DS GPU's formats (256 x 192 each, row by row), with the windows' layer masks applied, and each
-// line's compositing state. Pixels of a layer the line doesn't show (DISPCNT) are left as they were.
+// and its state. The BGs the GPU can draw from VRAM itself (Gpu2dLineState.gpuBg: text BGs in the standard palette,
+// affine BGs, no mosaic) are left to it; the others' and the OBJs' pixels come in the 3DS GPU's formats (256 x 192
+// each, row by row) with the windows' layer masks applied. Pixels of a layer the line doesn't show are left as they
+// were.
 typedef struct Gpu2dLineState {
     uint32_t dispcnt;        // DISPCNT (bits 3 3D, 8-12 BG0-3 and OBJ shown, 13-15 windows)
+    uint8_t gpuBg;           // bit n: BG n is drawn by the GPU from VRAM (not in Gpu2dLayers.bg)
+    uint8_t bgKind[4];       // 1 text, 2 affine (for the BGs in gpuBg)
+    uint16_t bgcnt[4], bghofs[4], bgvofs[4];  // BGxCNT, BGxHOFS, BGxVOFS
+    int16_t affine[2][4];    // BG2, BG3: PA, PB, PC, PD
+    uint16_t winin, winout;  // WININ, WINOUT (with DISPCNT bits 13-15: Gpu2dLayers.region)
     uint16_t bldcnt, bldalpha, bldy, backdrop;  // BLDCNT, BLDALPHA, BLDY; palette colour 0 (BGR555)
     uint16_t masterBright;   // MASTER_BRIGHT
     int16_t hofs3d;          // BG0HOFS (the 3D layer's scroll), -256 to 255
@@ -39,8 +46,15 @@ typedef struct Gpu2dLineState {
 typedef struct Gpu2dLayers {
     uint16_t *bg[2][4];      // per engine BG0-3: RGBA5551 (r << 11 | g << 6 | b << 1 | 1), 0 transparent
     uint32_t *obj[2];        // OBJs: RGBA8 (r << 24 | g << 16 | b << 8 | (priority + 1) * 32), 0 transparent
-    uint16_t *fx[2];         // 1 where the windows disable the colour effects (WININ / WINOUT bit 5), else 0
+    // with windows (DISPCNT bits 13-15): the window each pixel is in, as alpha 63 + 64 * region (0 outside, 1
+    // window 0, 2 window 1, 3 the OBJ window); WININ / WINOUT say what each shows
+    uint32_t *region[2];
     Gpu2dLineState line[2][192];
+    int32_t ref[2][192][4];  // BG2 X, Y, BG3 X, Y: the affine BGs' internal reference points at each line (20.8)
+    // each engine's BG VRAM (16 KB granules, the address mask) and BG palette (0x200 bytes), as at the frame's end
+    const uint8_t *const *bgGran[2];
+    uint32_t bgMask[2];
+    const uint8_t *palette[2];
     int topEngine;           // the engine on the top screen (POWCNT1 bit 15)
 } Gpu2dLayers;
 

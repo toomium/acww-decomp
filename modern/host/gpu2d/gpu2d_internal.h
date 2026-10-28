@@ -121,6 +121,8 @@ void gpu2d_feature(const Engine *e, enum Feature f);
 
 // gpu2d_bg.c: BG n's pixels of a line into e->bg[n] (all transparent when the BG shows nothing in this mode)
 void gpu2d_render_bg_line(Engine *e, int n, int line);
+// what BG n is in the engine's BG mode: 0 nothing, 1 text, 2 affine, 3 extended, 4 the large bitmap
+int gpu2d_bg_kind(const Engine *e, int n);
 // gpu2d_obj.c: the OBJs' pixels of a line into *dst
 void gpu2d_render_obj_line(Engine *e, int line, ObjLine *dst);
 
