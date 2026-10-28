@@ -62,13 +62,21 @@ static void engine_write8(Engine *e, u32 off, u8 value) {
     e->regs[off] = value;
     if ((off & ~0x17u) == 0x28) e->refWritten[off >> 4 & 1] |= (u8)(1 << (off >> 2 & 1));
 }
+// (a pointer the compiler can't see through: it would otherwise fold `regs + (addr - 0x04000000)` into the
+// constant `regs - 0x04000000` plus addr, an address outside the program, which a 3DS program's relocations
+// (.3dsx) can't express)
+static void *opaque(void *p) {
+    __asm__("" : "+r"(p));
+    return p;
+}
 void gpu2d_write8(uint32_t addr, uint8_t value) {
-    if (addr >= 0x04000000 && addr < 0x04000000 + REG_SIZE) engine_write8(&sEngine[0], addr - 0x04000000, value);
-    else if (addr >= 0x04001000 && addr < 0x04001000 + REG_SIZE) engine_write8(&sEngine[1], addr - 0x04001000, value);
+    if (addr >= 0x04000000 && addr < 0x04000000 + REG_SIZE) engine_write8(opaque(&sEngine[0]), addr - 0x04000000, value);
+    else if (addr >= 0x04001000 && addr < 0x04001000 + REG_SIZE)
+        engine_write8(opaque(&sEngine[1]), addr - 0x04001000, value);
     else if (addr == 0x04000304) sPowCnt = (u16)((sPowCnt & 0xff00) | value);
     else if (addr == 0x04000305) sPowCnt = (u16)((sPowCnt & 0x00ff) | value << 8);
-    else if (addr >= 0x04000240 && addr <= 0x04000246) sVramCnt[addr - 0x04000240] = value;
-    else if (addr == 0x04000248 || addr == 0x04000249) sVramCnt[addr - 0x04000248 + 7] = value;
+    else if (addr >= 0x04000240 && addr <= 0x04000246) ((u8 *)opaque(sVramCnt))[addr - 0x04000240] = value;
+    else if (addr == 0x04000248 || addr == 0x04000249) ((u8 *)opaque(sVramCnt))[addr - 0x04000248 + 7] = value;
 }
 void gpu2d_write16(uint32_t addr, uint16_t value) {
     gpu2d_write8(addr, (u8)value);
@@ -79,8 +87,8 @@ void gpu2d_write32(uint32_t addr, uint32_t value) {
     gpu2d_write16(addr + 2, (u16)(value >> 16));
 }
 uint32_t gpu2d_read32(uint32_t addr) {
-    if (addr >= 0x04000000 && addr + 4 <= 0x04000000 + REG_SIZE) return reg32(&sEngine[0], addr - 0x04000000);
-    if (addr >= 0x04001000 && addr + 4 <= 0x04001000 + REG_SIZE) return reg32(&sEngine[1], addr - 0x04001000);
+    if (addr >= 0x04000000 && addr + 4 <= 0x04000000 + REG_SIZE) return reg32(opaque(&sEngine[0]), addr - 0x04000000);
+    if (addr >= 0x04001000 && addr + 4 <= 0x04001000 + REG_SIZE) return reg32(opaque(&sEngine[1]), addr - 0x04001000);
     if (addr == 0x04000304) return sPowCnt;
     if (addr == 0x04000240) return sVramCnt[0] | sVramCnt[1] << 8 | sVramCnt[2] << 16 | (u32)sVramCnt[3] << 24;
     if (addr == 0x04000244) return sVramCnt[4] | sVramCnt[5] << 8 | sVramCnt[6] << 16;

@@ -41,7 +41,15 @@ static u64 sIoCount;  // register accesses
 static u8 sIo0[PAGE] __attribute__((aligned(8)));
 static u8 sIoB[PAGE] __attribute__((aligned(8)));
 static u8 sIo1[PAGE] __attribute__((aligned(8)));
-u8 *host_io(u32 a) { return a >= IO1 ? sIo1 + (a - IO1) : a >= IOB ? sIoB + (a - IOB) : sIo0 + (a - IO0); }
+// (a pointer the compiler can't see through: it would otherwise fold `page + (a - IO0)` into the constant
+// `page - IO0` plus a, an address outside the program, which a 3DS program's relocations (.3dsx) can't express)
+static u8 *opaque(u8 *p) {
+    __asm__("" : "+r"(p));
+    return p;
+}
+u8 *host_io(u32 a) {
+    return a >= IO1 ? opaque(sIo1) + (a - IO1) : a >= IOB ? opaque(sIoB) + (a - IOB) : opaque(sIo0) + (a - IO0);
+}
 static int is_io(u32 a) { return (a >= IO0 && a < IOB + PAGE) || (a >= IO1 && a < IO1 + PAGE); }
 
 // vram.c
