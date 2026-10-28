@@ -97,8 +97,14 @@ static int is_command(u8 c) {
            c == 0x41 || c == 0x50 || c == 0x60 || (c >= 0x70 && c <= 0x72);
 }
 
+static void exec_entry(Entry e);
 static void fifo_put(u8 cmd, u32 param) {
     Entry e = {cmd, param};
+    // nothing queued and nothing holding it back: run at once, as the drain after the write (gpu3d_write32) would
+    if (!sPipeN && !sFifoN && sGeomOn && !sFlushPending) {
+        exec_entry(e);
+        return;
+    }
     if (cmd == 0x11 || cmd == 0x12) sPushPopQueued++;
     if (cmd >= 0x70 && cmd <= 0x72) sTestQueued++;
     if (sFifoN == 0 && sPipeN < 4) {
@@ -380,7 +386,9 @@ static void light_vector(u32 p) {
         sLightDir[l][i] = (s16)((((s64)d[0] * sVec.m[i] + (s64)d[1] * sVec.m[4 + i] + (s64)d[2] * sVec.m[8 + i]) >> 12) >> 3);
     sLightParam[l] = p;
     for (int i = 0; i < 9; i++) sLightVec[l][i] = sVec.m[(i / 3) * 4 + i % 3];
-    if (getenv("ACWW_GPU3D_LIGHTLOG"))
+    static int lightLog = -1;
+    if (lightLog < 0) lightLog = getenv("ACWW_GPU3D_LIGHTLOG") != 0;
+    if (lightLog)
         fprintf(stderr, "light %d param %08x dir %d %d %d vec %d %d %d / %d %d %d / %d %d %d -> %d %d %d\n", l, p, d[0], d[1],
                 d[2], sVec.m[0], sVec.m[1], sVec.m[2], sVec.m[4], sVec.m[5], sVec.m[6], sVec.m[8], sVec.m[9], sVec.m[10],
                 sLightDir[l][0], sLightDir[l][1], sLightDir[l][2]);
@@ -549,9 +557,10 @@ static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *c
         }
     static int kPlanes[6][2] = {{2, 1}, {2, -1}, {1, 1}, {1, -1}, {0, 1}, {0, -1}};  // (z, then y, then x)
     {   // (experiment: ACWW_GPU3D_CLIPORDER=zZxXyY, lower case the far / right / top plane)
-        static int init;
-        const char *o = getenv("ACWW_GPU3D_CLIPORDER");
-        if (!init++ && o && strlen(o) == 6)
+        static int init;  // (read once: getenv here, for every clipped polygon, was much of the clipping's time)
+        const char *o = init ? 0 : getenv("ACWW_GPU3D_CLIPORDER");
+        init = 1;
+        if (o && strlen(o) == 6)
             for (int i = 0; i < 6; i++) {
                 char c = o[i];
                 kPlanes[i][0] = (c | 0x20) == 'x' ? 0 : (c | 0x20) == 'y' ? 1 : 2;
