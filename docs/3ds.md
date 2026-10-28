@@ -318,7 +318,7 @@ geometry engine's polygons (screen positions with 4 fractional bits, depth, w, c
 state; a `C3D_RenderTarget` at 256x192 first (transposed: 1.3). Done when the town's 3D looks like the CPU
 rasteriser's picture of the same frame (render both: `ACWW_RENDER_COMPARE`'s idea, docs/host.md).
 
-**T3.3 `pica_display.c`: composite.** The 3D picture and the 2D renderer's deferred words put together, as
+**T3.3 `pica_display.c`: composite. Done 2026-10-28 (see the log; differs from this first design).** The 3D picture and the 2D renderer's deferred words put together, as
 `wgpu_display.c` does; its shader and the comment above `gpu2d_deferred` (`gpu2d/gpu2d.h:55-67`) are the rules.
 Without fragment shaders, as textured quads: the CPU turns each screen's deferred words into two 256x192 textures,
 UNDER (the colour below the 3D layer, opaque) and OVER (colour and alpha in front of it), written linearly and tiled
@@ -420,3 +420,18 @@ the exheader can enable core 2 on the New 3DS (1.3).
     then less-or-equal); the W-buffer uses the GPU's W-buffer mode (`C3D_DepthMap(false, ...)`).
   - Open: the window left of the house in that frame is missing (a hole to the clear colour: some polygons not
     drawn - which and why is to be found); no anti-aliasing; the composite is still the CPU's at 256x192 (T3.3).
+- 2026-10-28: speed, measured in Azahar (headless, the attract demo, `ACWW_FPS=1`: frames a second and the
+  renderers' milliseconds a frame) and with samples through Azahar's GDB stub (`-g <port>`, `arm-none-eabi-gdb`,
+  interrupted every second or so). Frames a second, step by step: 0.6 (all on the CPU) - 3-4.5 (the 3D on the
+  PICA, T3.2) - 4.7-8.7 (texture slots gathered only after a VRAMCNT change: `vram.c host_vram_generation`; a 1 MB
+  ROM cache; `-O2`) - 5.5 (no divisions in the read-back) - 8.2 (frameskip: `ACWW_FRAMESKIP`, the 3DS's default 1;
+  the game runs every frame) - 13.2 (the compositing on the PICA: `pica_display.c`) - 15.7 (the 3D picture
+  straight to it, not read back; the game's "alpha only" fog in the vertices' alpha) - 16.1 (texture lookups) -
+  19.5 (the BGs drawn by the PICA from VRAM: textures of whole BGs, updated tile by tile; the windows as regions in
+  the stencil buffer; the passes batched over groups of lines: the top screen's per-line affine effect had made
+  1350 draws a frame). Frame 300 stays within rounding of the PC's picture throughout.
+  Where the time goes now (150 samples): the 3D geometry engine 31 %, the game's code 21 %, the 2D renderer on the
+  CPU (OBJs, the windows' regions) 14 %, the 3D renderer's CPU side 12 %, DMA 6 %, registers and events 5 %, sound
+  5 %, the compositing's CPU side 4 %. Azahar's speed isn't the hardware's: T2.8 is still to be measured.
+  Not yet seen on a screen: the GPU's pictures on the 3DS's screens (`Mtx_OrthoTilt`); the screenshots are read
+  back from the composited pictures, not from the screens.
