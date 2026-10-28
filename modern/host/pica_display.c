@@ -20,7 +20,7 @@
 int pdisp_init(void) { return 0; }
 void pdisp_attach_screens(void) {}
 struct Gpu2dLayers *pdisp_layers(void) { return 0; }
-void pdisp_frame(const uint32_t *picture3d) { (void)picture3d; }
+void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
 
 #else
@@ -53,6 +53,8 @@ static int sNV;
 static Gpu2dLayers sLayers;            // its pixel buffers in linear memory (the GPU's transfers read them)
 static C3D_Tex sBg[2][4], sObj[2], sFx[2], s3d;
 static u32 *s3dStage;                  // the 3D picture as RGBA8, row by row
+static C3D_Tex *s3dTex;                // this frame's 3D picture: the GPU's (premultiplied) or s3d
+static int s3dPremultiplied;
 static C3D_Tex sComp[2];               // each engine's picture
 static C3D_RenderTarget *sCompTarget[2], *sScreen[2];
 static u32 *sReadback;
@@ -162,7 +164,7 @@ static void layer(int engine, const Gpu2dLineState *s, int y0, int y1, int l, in
     u32 bld = s->bldcnt, effect = bld >> 6 & 3, first = bld >> l & 1, second = bld >> (8 + l) & 1;
     u32 eva = s->bldalpha & 31, evb = s->bldalpha >> 8 & 31;
     eva = eva > 16 ? 16 : eva, evb = evb > 16 ? 16 : evb;
-    C3D_Tex *t = l == 4 ? &sObj[engine] : l == 0 && is3d ? &s3d : &sBg[engine][l];
+    C3D_Tex *t = l == 4 ? &sObj[engine] : l == 0 && is3d ? s3dTex : &sBg[engine][l];
     source(t);
     if (l == 4) C3D_AlphaTest(true, GPU_EQUAL, (prio + 1) * 32);
     else C3D_AlphaTest(true, GPU_GREATER, 0);
@@ -178,7 +180,8 @@ static void layer(int engine, const Gpu2dLineState *s, int y0, int y1, int l, in
         u32 mask = blend3d ? 1 : 5;
         stencil_test(GPU_EQUAL, 1, mask);
         if (blend3d) {
-            C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
+            C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, s3dPremultiplied ? GPU_ONE : GPU_SRC_ALPHA,
+                           GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
         } else {
             // (the constant colour's red, green and blue are eva / 16, its alpha evb / 16: R in the low byte)
             u32 a = eva * 255 / 16, b = evb * 255 / 16;
@@ -186,8 +189,9 @@ static void layer(int engine, const Gpu2dLineState *s, int y0, int y1, int l, in
             C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_CONSTANT_COLOR, GPU_CONSTANT_ALPHA, GPU_ONE, GPU_ZERO);
         }
         rect(x0, (float)y0, x1, (float)y1, u0, u1, 0, 0);
-        stencil_test(GPU_NOTEQUAL, 1, mask);  // (elsewhere: as it is)
-        opaque();
+        stencil_test(GPU_NOTEQUAL, 1, mask);  // (elsewhere: as it is; the GPU's premultiplied 3D picture over what is
+        // below, as its colour alone is darkened where its alpha isn't full)
+        if (!(blend3d && s3dPremultiplied)) opaque();
         rect(x0, (float)y0, x1, (float)y1, u0, u1, 0, 0);
         colour_writes(0);  // (then the stencil says what this layer is, where it is)
         stencil_write(bits, 3);
@@ -254,8 +258,10 @@ static void upload(void *src, C3D_Tex *t, u32 bytes, GX_TRANSFER_FORMAT fmt) {
                             kLinearToTiled | GX_TRANSFER_IN_FORMAT(fmt) | GX_TRANSFER_OUT_FORMAT(fmt));
 }
 
-void pdisp_frame(const uint32_t *picture3d) {
+void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
     sScreenRead[0] = sScreenRead[1] = 0;
+    s3dTex = texture3d ? (C3D_Tex *)texture3d : &s3d;
+    s3dPremultiplied = texture3d != 0;
     // the layers this frame's lines show, to the GPU's textures; the 3D picture as RGBA8 (its colour straight)
     u32 used[2] = {0, 0};
     for (int e = 0; e < 2; e++)
@@ -268,7 +274,7 @@ void pdisp_frame(const uint32_t *picture3d) {
         if (used[e] & 0x1000) upload(sLayers.obj[e], &sObj[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
         if (used[e] & 0xe000) upload(sLayers.fx[e], &sFx[e], W * H * 2, GX_TRANSFER_FMT_RGB5A1);
     }
-    if (picture3d && (used[0] & 8)) {
+    if (!texture3d && picture3d && (used[0] & 8)) {
         static u32 a8[32];
         if (!a8[31])
             for (u32 a = 0; a < 32; a++) a8[a] = a * 255 / 31;

@@ -18,6 +18,7 @@
 #ifndef __3DS__
 
 int g3p_init(void) { return 0; }
+void *g3p_picture(void) { return 0; }
 void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags) {
     (void)r, (void)img, (void)pal, (void)texChanged, (void)color, (void)depth, (void)flags;
 }
@@ -46,6 +47,11 @@ typedef struct {
 static DVLB_s *sDvlb;
 static shaderProgram_s sProgram;
 static C3D_RenderTarget *sTarget;
+// the pictures drawn for the GPU's compositing (color NULL: pica_display.c), into two textures in turn: the one
+// drawn last (sPicture) is what the screens show while the next is drawn
+static C3D_Tex sPic[2];
+static C3D_RenderTarget *sPicTarget[2];
+static int sPicture = -1;
 static PVertex *sVerts;
 static u32 *sColorOut, *sDepthOut;  // the read-back pictures (linear memory)
 
@@ -157,6 +163,12 @@ int g3p_init(void) {
     sDepthOut = linearAlloc(W * H * 4);
     sDvlb = DVLB_ParseFile((u32 *)gpu3d_pica_shbin, gpu3d_pica_shbin_size);
     if (!sTarget || !sVerts || !sColorOut || !sDepthOut || !sDvlb) return 0;
+    for (int i = 0; i < 2; i++) {
+        if (!C3D_TexInitVRAM(&sPic[i], 256, 256, GPU_RGBA8)) return 0;
+        C3D_TexSetFilter(&sPic[i], GPU_NEAREST, GPU_NEAREST);
+        if (!(sPicTarget[i] = C3D_RenderTargetCreateFromTex(&sPic[i], GPU_TEXFACE_2D, 0, GPU_RB_DEPTH24_STENCIL8)))
+            return 0;
+    }
     shaderProgramInit(&sProgram);
     shaderProgramSetVsh(&sProgram, &sDvlb->DVLE[0]);
     return 1;
@@ -217,23 +229,51 @@ static void apply(const State *s, const G3RenderState *r) {
 
 static u32 rgb5_to_6(u32 c) { return c ? c * 2 + 1 : 0; }
 
+void *g3p_picture(void) { return sPicture >= 0 ? &sPic[sPicture] : 0; }
+
+// the fog's density (0-128) at depth z, as gpu3d_raster.c fog_pass
+static s32 fog_density(const G3RenderState *r, s32 z) {
+    int shift = r->dispcnt >> 8 & 15;
+    s32 step = shift <= 10 ? 0x400 >> shift : 0, b0 = r->fogOffset + step, d;
+    z >>= 9;
+    if (z < b0 || !step) d = z < b0 ? r->fogTable[0] : r->fogTable[31];
+    else {
+        s32 n = (z - b0) >> (10 - shift);
+        if (n >= 31) d = r->fogTable[31];
+        else {
+            s32 frac = (z - b0) - n * step, v = (r->fogTable[n + 1] - r->fogTable[n]) * frac;
+            d = r->fogTable[n] + (v >= 0 ? v >> (10 - shift) : -(-v >> (10 - shift)));
+        }
+    }
+    return d >= 127 ? 128 : d;
+}
+
 void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags) {
     sFrame++;
+    // for the GPU's compositing (color NULL): into the next texture, nothing read back; the fog only "alpha only"
+    // (the caller sends the colour fog here: gpu3d_raster.c), worked into the polygons' alpha at their vertices (with
+    // a fog alpha of 0 exactly the DS's: the density then scales the alpha)
+    int direct = color == 0, fogAlpha = direct && (r->dispcnt & 0xc0) == 0xc0;
+    u32 fa = r->fogColor >> 16 & 31;
+    C3D_RenderTarget *target = direct ? sPicTarget[sPicture < 0 ? 0 : sPicture ^ 1] : sTarget;
+    const float hy = direct ? 256.0f : (float)H;  // (the texture's rows: lines below 192 aren't drawn)
     if (texChanged) {
         track(img, sImgCopy, sImgVer, IMG_SIZE);
         track(pal, sPalCopy, sPalVer, PAL_SIZE);
     }
     u32 cc = r->clearColor, ca = r->clearAttrHi & 31;
     u32 cr = rgb5_to_6(cc & 31), cg = rgb5_to_6(cc >> 5 & 31), cb = rgb5_to_6(cc >> 10 & 31);
-    u32 a8 = ca * 255 / 31, cd = (u32)(r->clearDepth & 0x7fff) * 0x200 + ((r->clearDepth & 0x7fff) == 0x7fff ? 0x1ff : 0);
+    u32 cd = (u32)(r->clearDepth & 0x7fff) * 0x200 + ((r->clearDepth & 0x7fff) == 0x7fff ? 0x1ff : 0);
+    if (fogAlpha && (cc & 0x8000)) ca = (fa * (u32)fog_density(r, (s32)cd) + ca * (128 - (u32)fog_density(r, (s32)cd))) >> 7;
+    u32 a8 = ca * 255 / 31;
 
     C3D_FrameBegin(0);  // (not paced to the display: hw.c paces the frames)
     // (the colour premultiplied as the polygons')
-    C3D_RenderTargetClear(sTarget, C3D_CLEAR_ALL,
+    C3D_RenderTargetClear(target, C3D_CLEAR_ALL,
                           (cr * 255 / 63 * a8 / 255) << 24 | (cg * 255 / 63 * a8 / 255) << 16 |
                               (cb * 255 / 63 * a8 / 255) << 8 | a8,
                           cd | (cc & 0x8000 ? 0x80u : 0) << 24);
-    C3D_FrameDrawOn(sTarget);
+    C3D_FrameDrawOn(target);
     C3D_BindProgram(&sProgram);
     C3D_AttrInfo *ai = C3D_GetAttrInfo();
     AttrInfo_Init(ai);
@@ -273,38 +313,51 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
             have = 1;
         }
         u32 pa = p->attr >> 16 & 31;
-        float alpha = (float)(pa ? pa : 31) / 31.0f;
-        float tw = s.tex ? 16.0f * (float)(8 << (p->texparam >> 20 & 7)) : 1.0f;
-        float th = s.tex ? 16.0f * (float)(8 << (p->texparam >> 23 & 7)) : 1.0f;
+        // (multiplications by reciprocals: the compiler keeps float divisions as divisions, which are slow here)
+        static const float kSize[8] = {1 / 128.0f, 1 / 256.0f, 1 / 512.0f, 1 / 1024.0f,
+                                       1 / 2048.0f, 1 / 4096.0f, 1 / 8192.0f, 1 / 16384.0f};  // (1 / (16 * size))
+        const float kx = 2.0f / (16 * W), ky = 2.0f / (16 * hy), kz = 1.0f / 16777215.0f, k6 = 1.0f / 63.0f;
+        float alpha = (float)(pa ? pa : 31) * (1.0f / 31.0f);
+        float tw = s.tex ? kSize[p->texparam >> 20 & 7] : 1.0f, th = s.tex ? kSize[p->texparam >> 23 & 7] : 1.0f;
         PVertex pv[10];
         for (int i = 0; i < p->nv; i++) {
             const G3Vertex *v = p->v[i];
             float w = (float)(p->w[i] > 0 ? p->w[i] : 1);
-            float x = (float)v->hx / 16.0f / W * 2.0f - 1.0f, y = 1.0f - (float)v->hy / 16.0f / H * 2.0f;
+            float x = (float)v->hx * kx - 1.0f, y = 1.0f - (float)v->hy * ky;
             // (depth test "equal" passes within 0x200 on the DS, gpu3d_raster.c depth_pass: moved nearer by that, then
             // less or equal)
-            float z = ((float)p->z[i] - (s.depthEq ? 0x200 : 0)) / 16777215.0f;
+            float z = ((float)p->z[i] - (s.depthEq ? 0x200 : 0)) * kz;
             z = z < 0.0f ? 0.0f : z > 1.0f ? 1.0f : z;
             PVertex *o = &pv[i];
             o->pos[0] = x * w, o->pos[1] = y * w, o->pos[2] = s.wbuffer ? -z : -z * w, o->pos[3] = w;
-            for (int c = 0; c < 3; c++) o->col[c] = (float)(v->color[c] >> 3) / 63.0f;
+            for (int c = 0; c < 3; c++) o->col[c] = (float)(v->color[c] >> 3) * k6;
             o->col[3] = alpha;
+            if (fogAlpha && (p->attr & 0x8000)) {
+                u32 d = (u32)fog_density(r, p->z[i]), a = pa ? pa : 31;
+                o->col[3] = (float)((fa * d + a * (128 - d)) >> 7) * (1.0f / 31.0f);
+            }
             // (v from the top: the GPU's v = 1 is the texture's first row in memory, as tile() lays it out)
-            o->tc[0] = (float)v->tex[0] / tw, o->tc[1] = 1.0f - (float)v->tex[1] / th;
+            o->tc[0] = (float)v->tex[0] * tw, o->tc[1] = 1.0f - (float)v->tex[1] * th;
         }
         for (int i = 1; i + 1 < p->nv; i++) sVerts[nv++] = pv[0], sVerts[nv++] = pv[i], sVerts[nv++] = pv[i + 1];
     }
     if (nv > first) C3D_DrawArrays(GPU_TRIANGLES, first, nv - first);
     GSPGPU_FlushDataCache(sVerts, (u32)nv * sizeof(PVertex));
+    if (direct) {  // (the GPU draws while the CPU goes on: the compositing waits for it)
+        C3D_FrameEnd(0);
+        sPicture = sPicture < 0 ? 0 : sPicture ^ 1;
+        return;
+    }
     // the pictures back to linear memory (the transfers wait for the drawing before them, and for themselves)
     u32 flags3 = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
                  GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
                  GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
     C3D_SyncDisplayTransfer(sTarget->frameBuf.colorBuf, GX_BUFFER_DIM(W, H), sColorOut, GX_BUFFER_DIM(W, H), flags3);
-    C3D_SyncDisplayTransfer(sTarget->frameBuf.depthBuf, GX_BUFFER_DIM(W, H), sDepthOut, GX_BUFFER_DIM(W, H), flags3);
+    int fog = (r->dispcnt & 0x80) != 0;  // (the depth and the fog flags are only the fog pass's)
+    if (fog) C3D_SyncDisplayTransfer(sTarget->frameBuf.depthBuf, GX_BUFFER_DIM(W, H), sDepthOut, GX_BUFFER_DIM(W, H), flags3);
     C3D_FrameEnd(0);
     GSPGPU_InvalidateDataCache(sColorOut, W * H * 4);
-    GSPGPU_InvalidateDataCache(sDepthOut, W * H * 4);
+    if (fog) GSPGPU_InvalidateDataCache(sDepthOut, W * H * 4);
 
     // into the rasteriser's formats: the colour back from premultiplied, 6 bits; alpha 5 bits; depth 24 bits. (A
     // reciprocal per alpha: the ARM11 has no divide instruction.)
@@ -320,10 +373,9 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
             c = (r > 63 ? 63 : r) | (g > 63 ? 63 : g) << 8 | (b > 63 ? 63 : b) << 16;
         }
         color[i] = c | alpha5[a] << 24;
-        u32 d = sDepthOut[i];
-        depth[i] = d & 0xffffff;
-        flags[i] = (u8)(d >> 31);
     }
+    if (fog)
+        for (int i = 0; i < W * H; i++) depth[i] = sDepthOut[i] & 0xffffff, flags[i] = (u8)(sDepthOut[i] >> 31);
 }
 
 #endif

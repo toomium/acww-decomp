@@ -81,8 +81,10 @@ void *g3w_picture(void);
 // gpu3d_pica.c (the 3DS; elsewhere g3p_init fails): the polygons drawn by the 3DS's GPU into the rasteriser's
 // colour, depth and flag buffers (gpu3d_raster.c's formats; flags: bit 0 fog)
 int g3p_init(void);
-// (texChanged: the slots may have changed since the last frame)
+// (texChanged: the slots may have changed since the last frame; color NULL: drawn for the GPU's compositing into a
+// texture, g3p_picture, nothing read back)
 void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags);
+void *g3p_picture(void);  // the last picture drawn for the GPU's compositing (a C3D_Tex), NULL none
 void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out);  // (gpu3d_raster.c)
 
 // feature census (gpu3d_geom.c)

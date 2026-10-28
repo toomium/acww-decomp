@@ -510,11 +510,14 @@ static void aa_pass(void) {
         if (sCov[i] < 31) sColor[i] = aa_resolve(sColor[i], sColor2[i], sCov[i]);
 }
 
+// (a division by 2^k as C's, truncating towards zero, with shifts: the 3DS's CPU has no divide instruction)
+static inline s32 div_pow2(s32 v, int k) { return v >= 0 ? v >> k : -(-v >> k); }
 static void fog_pass(void) {
     const G3RenderState *r = sR;
     if (!(r->dispcnt & 0x80) || getenv("ACWW_GPU3D_NOFOG")) return;  // (NOFOG: diagnostics)
     int shift = r->dispcnt >> 8 & 15;
     s32 step = shift <= 10 ? 0x400 >> shift : 0;
+    int k = 10 - shift;  // (step = 2^k)
     u32 fc = r->fogColor;
     u32 fr = rgb5_to_6(fc & 31), fgc = rgb5_to_6(fc >> 5 & 31), fb = rgb5_to_6(fc >> 10 & 31), fa = fc >> 16 & 31;
     for (int i = 0; i < W * H; i++) {
@@ -524,11 +527,11 @@ static void fog_pass(void) {
         s32 b0 = r->fogOffset + step;
         if (z < b0 || !step) d = z < b0 ? r->fogTable[0] : r->fogTable[31];
         else {
-            s32 n = (z - b0) / step;
+            s32 n = (z - b0) >> k;  // (z >= b0)
             if (n >= 31) d = r->fogTable[31];
             else {
                 s32 frac = (z - b0) - n * step;
-                d = r->fogTable[n] + (r->fogTable[n + 1] - r->fogTable[n]) * frac / step;
+                d = r->fogTable[n] + div_pow2((r->fogTable[n + 1] - r->fogTable[n]) * frac, k);
             }
         }
         if (d >= 127) d = 128;
@@ -568,12 +571,14 @@ void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out) {
 
 // ACWW_RENDERER3D=pica (the 3DS): the polygons drawn by its GPU (gpu3d_pica.c) into this rasteriser's buffers, then
 // its fog pass
-static int sPica;
+static int sPica, sPicaDirect, sPicaLastDirect;
 int gpu3d_use_pica(void) {
     if (!g3p_init()) return 0;
     sPica = 1;
     return 1;
 }
+void gpu3d_pica_direct(int on) { sPicaDirect = on; }
+void *gpu3d_pica_picture(void) { return sPicaLastDirect ? g3p_picture() : 0; }
 
 // ACWW_RENDERER3D=wgpu: the polygons drawn by the GPU (gpu3d_wgpu.c), read back into the same frame buffer or not
 static int sWgpu, sWgpuReadback;
@@ -597,8 +602,10 @@ void g3_render(void) {
     if (sWgpu)  // (the GPU's rasteriser: gpu3d_wgpu.c)
         g3w_render(sR, sImgFlat, sPalFlat, sWgpuReadback ? sColor : NULL);
     else if (sPica) {  // (the 3DS GPU's: gpu3d_pica.c; no anti-aliasing pass, it has no coverage)
-        g3p_render(sR, sImgFlat, sPalFlat, texChanged, sColor, sDepth, sFlags);
-        fog_pass();
+        // (straight to the GPU's compositing unless the colour fog needs the fog pass here)
+        sPicaLastDirect = sPicaDirect && (sR->dispcnt & 0xc0) != 0x80;
+        g3p_render(sR, sImgFlat, sPalFlat, texChanged, sPicaLastDirect ? 0 : sColor, sDepth, sFlags);
+        if (!sPicaLastDirect) fog_pass();
     } else {
         clear_buffers();
         sPE.p = 0;
@@ -607,7 +614,7 @@ void g3_render(void) {
         aa_pass();
     }
     sShown ^= 1;
-    if (!sWgpu || sWgpuReadback) memcpy(sFrameBuf[sShown], sColor, sizeof sColor);
+    if ((!sWgpu || sWgpuReadback) && !(sPica && sPicaLastDirect)) memcpy(sFrameBuf[sShown], sColor, sizeof sColor);
     if (timing) {
         double ns = (double)(host_plat_time_ns() - t0);
         sRenderNs += ns;

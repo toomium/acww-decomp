@@ -129,6 +129,7 @@ void render_init(void) {
     if (sOwn && !sCompare && !env_is("ACWW_COMPOSITE", "cpu")) {
         sPica = pdisp_init();
         if (!sPica) fprintf(stderr, "render: the 3DS GPU's compositing couldn't start: the CPU's\n");
+        gpu3d_pica_direct(sPica);  // (its 3D pictures then straight from the GPU, not read back)
     }
 #endif
     if (getenv("ACWW_RENDER_COMPARE_MAX")) sCompareMax = strtol(getenv("ACWW_RENDER_COMPARE_MAX"), 0, 10);
@@ -644,8 +645,9 @@ void render_frame(void) {
         }
     }
     u64 t1 = host_plat_time_ns();
+    void *texture3d = sPica && sOwn3d ? gpu3d_pica_picture() : NULL;  // (the last frame's, as lines3d)
     if (sGpu3d) gpu3d_run_frame();
-    if (sPica) pdisp_frame(sOwn3d ? lines3d : NULL);  // (the 3D picture the 2D renderer would have shown)
+    if (sPica) pdisp_frame(texture3d, sOwn3d ? lines3d : NULL);  // (the 3D picture the 2D renderer would have shown)
     render_timing(t0, t1, host_plat_time_ns());
     if (sCompare && !sSelftest) {
         render_compare("frame", host_frame());

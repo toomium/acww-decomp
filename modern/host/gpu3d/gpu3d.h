@@ -53,6 +53,10 @@ const uint32_t *gpu3d_lines(void);
 int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback);
 // the polygons drawn by the 3DS's GPU (gpu3d_pica.c) into the rasteriser's buffers; 0 if this build can't
 int gpu3d_use_pica(void);
+// 1: the pictures drawn for the 3DS GPU's compositing (pica_display.c) when they can be, not read back; the last
+// such picture (a C3D_Tex), NULL when the last one was read back into the frame buffer (gpu3d_lines)
+void gpu3d_pica_direct(int on);
+void *gpu3d_pica_picture(void);
 // the picture the frame shows, on the GPU: a WGPUTextureView of an R32Uint texture of 256 x 192 times the scale, in
 // gpu3d_lines' format
 void *gpu3d_wgpu_picture(void);
