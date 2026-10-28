@@ -45,6 +45,7 @@
 #include "gpu2d/gpu2d.h"
 #include "gpu3d/gpu3d.h"
 #include "host_mem.h"
+#include "plat.h"
 #include "render.h"
 #include "wgpu_display.h"
 
@@ -558,11 +559,51 @@ int render_check_gpu2d(void) {
     return 1;
 }
 
+// ACWW_FPS: also the renderers' share of the time, every 120 frames (the 2D one with the game's H-blank work)
+static u64 sTime2d, sTime3d;
+static void render_timing(u64 t0, u64 t1, u64 t2) {
+    static int on = -1;
+    if (on < 0) on = getenv("ACWW_FPS") != 0;
+    if (!on) return;
+    sTime2d += t1 - t0, sTime3d += t2 - t1;
+    if (host_frame() % 120 == 0) {
+        fprintf(stderr, "render: frame %llu: 2D %.1f ms, 3D %.1f ms a frame\n", (unsigned long long)host_frame(),
+                (double)sTime2d / 120e6, (double)sTime3d / 120e6);
+        sTime2d = sTime3d = 0;
+    }
+}
+
 static void render_hblank(int line, void *context) {
     (void)context;
     host_hblank(line);
 }
+// ACWW_FRAMESKIP=<n>: the screens drawn every n + 1 frames (the 3DS's default: 1, every other one; elsewhere 0).
+// The game runs every frame as before - its H-blank work line by line, the geometry engine - only the pictures are
+// skipped; the 3D one is drawn in the frame before the screens' (the 2D renderer shows the last frame's 3D picture)
+static int frameskip(void) {
+    static int n = -1;
+    if (n < 0) {
+#ifdef __3DS__
+        n = 1;
+#else
+        n = 0;
+#endif
+        if (getenv("ACWW_FRAMESKIP")) n = atoi(getenv("ACWW_FRAMESKIP"));
+        if (n < 0) n = 0;
+    }
+    return n;
+}
+
 void render_frame(void) {
+    u64 every = (u64)frameskip() + 1;
+    int draw2d = host_frame() % every == 0, raster3d = (host_frame() + 1) % every == 0;
+    if (!draw2d && !sCompare && !sGpuDisplay) {
+        if (sOwn)
+            for (int line = 0; line < 192; line++) render_hblank(line, 0);
+        if (sGpu3d) gpu3d_set_raster(raster3d), gpu3d_run_frame();
+        return;
+    }
+    gpu3d_set_raster(1);
     // the 3D picture this frame shows (melonDS renders the next one in the frame)
     const uint32_t *lines3d = s3d;
     if (sGpu2d) {
@@ -571,6 +612,7 @@ void render_frame(void) {
         else melon_3d_lines(s3d);
     }
     if (sMelon) melon_frame();
+    u64 t0 = host_plat_time_ns();
     if (sGpu2d || sGpu3d) host_vram_flush();
     if (sGpu2d) {
         Gpu2dFrameInput in;
@@ -593,7 +635,9 @@ void render_frame(void) {
             if (sGpu2dMode == 2 && !sSelftest) render_check_gpu2d();
         }
     }
+    u64 t1 = host_plat_time_ns();
     if (sGpu3d) gpu3d_run_frame();
+    render_timing(t0, t1, host_plat_time_ns());
     if (sCompare && !sSelftest) {
         render_compare("frame", host_frame());
         render_compare_3d("frame", host_frame());

@@ -57,6 +57,8 @@ G3RenderState gG3Render;
 const uint8_t *const *gG3Banks;
 u32 gG3VramGeneration = ~0u;
 void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
+static int sRaster = 1;
+void gpu3d_set_raster(int on) { sRaster = on; }
 
 // ---- feature census
 static u64 sFeatureFrame[F_COUNT];
@@ -1195,7 +1197,7 @@ void gpu3d_frame(const uint8_t *const bank[9]) {
         drain();
     }
     if (sDispCnt & 1) {}
-    g3_render();
+    if (sRaster) g3_render();
 }
 
 const uint32_t *gpu3d_lines(void) { return g3_frame_lines(); }

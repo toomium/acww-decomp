@@ -34,6 +34,7 @@ void host_plat_init(void) {
     setenv("ACWW_ROM", DIR "game.nds", 0);
     bool n3ds = false;
     APT_CheckNew3DS(&n3ds);
+    osSetSpeedupEnable(true);  // (the New 3DS: 804 MHz and its L2 cache instead of 268 MHz; nothing on the others)
     fprintf(stderr, "3ds: %s, application memory %lu KB (%lu KB free), heap %lu KB, linear heap %lu KB\n",
             n3ds ? "New 3DS" : "Old 3DS", (unsigned long)osGetMemRegionSize(MEMREGION_APPLICATION) / 1024,
             (unsigned long)osGetMemRegionFree(MEMREGION_APPLICATION) / 1024, (unsigned long)envGetHeapSize() / 1024,
