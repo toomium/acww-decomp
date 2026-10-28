@@ -10,6 +10,10 @@
 #include <stdint.h>
 #include <time.h>
 
+// ---- called first in main: what the platform sets up before anything else (the 3DS: the options from a file,
+// the log); nothing elsewhere
+void host_plat_init(void);
+
 // ---- time
 uint64_t host_plat_time_ns(void);           // a monotonic clock in nanoseconds (any epoch)
 void host_plat_sleep_until_ns(uint64_t t);  // sleep until host_plat_time_ns() >= t

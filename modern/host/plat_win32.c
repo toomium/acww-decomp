@@ -55,6 +55,8 @@ static DWORD WINAPI thread_main(LPVOID p) {
     s.fn(s.arg);
     return 0;
 }
+void host_plat_init(void) {}
+
 void host_plat_restart(char **argv) {
     char path[MAX_PATH];
     if (!GetModuleFileNameA(NULL, path, sizeof path)) return;

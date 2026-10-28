@@ -16,6 +16,8 @@
 
 #include "plat.h"
 
+void host_plat_init(void) {}
+
 uint64_t host_plat_time_ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
