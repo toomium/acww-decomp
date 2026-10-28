@@ -7,8 +7,8 @@
 
 typedef uint8_t u8;
 typedef uint16_t u16;
-typedef uint32_t u32;
-typedef int32_t s32;
+typedef unsigned int u32;
+typedef signed int s32;  // (the game's types, include/types.h: uint32_t is unsigned long on arm-none-eabi)
 typedef unsigned long long u64;  // (the game's type: uint64_t is unsigned long on 64-bit Linux)
 
 // main.c

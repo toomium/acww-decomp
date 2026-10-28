@@ -55,12 +55,12 @@ void melon_write16(u32 addr, u16 v);
 void melon_write32(u32 addr, u32 v);
 u32 melon_read32(u32 addr);
 void melon_frame(void);
-const u32 *melon_screen(int screen);
+const uint32_t *melon_screen(int screen);
 int melon_gx_fifo_irq_level(void);
 void melon_debug(void);
-void melon_3d_lines(u32 *out);
+void melon_3d_lines(uint32_t *out);
 int melon_3d_poly_count(void);
-int melon_3d_poly_get(int i, Gpu3dVertexOut *v, u32 *attr, u32 *texparam, u32 *texpal, int *flags);
+int melon_3d_poly_get(int i, Gpu3dVertexOut *v, uint32_t *attr, uint32_t *texparam, uint32_t *texpal, int *flags);
 // hw.c
 void host_hblank(int line);
 // vram.c
@@ -86,7 +86,7 @@ static u64 sPolyFrames, sPolyDiffering, sFirstPolyDiffering = ~0ull;
 static long sPolyLines;
 static u64 sPix3dFrames, sPix3dDiffering, sFirstPix3dDiffering = ~0ull;
 static long sPix3dLines;
-static u32 s3d[256 * 192];
+static uint32_t s3d[256 * 192];
 
 static int env_is(const char *name, const char *value) {
     const char *r = getenv(name);
@@ -303,7 +303,7 @@ int render_compare(const char *kind, u64 label) {
     sCompared++;
     int differs = 0;
     for (int s = 0; s < 2; s++) {
-        const u32 *m = melon_screen(s), *o = gpu2d_screen(s);
+        const uint32_t *m = melon_screen(s), *o = gpu2d_screen(s);
         int first = -1, count = 0;
         for (int i = 0; i < 256 * 192; i++)
             if ((m[i] ^ o[i]) & 0xffffff) { if (first < 0) first = i; count++; }
@@ -343,7 +343,7 @@ static void census_polygons(u64 label) {
     int n = nm < no ? nm : no;
     for (int i = 0; i < n; i++) {
         Gpu3dVertexOut vm[10], vo[10];
-        u32 am, ao, tm, to, pm, po;
+        uint32_t am, ao, tm, to, pm, po;
         int fm, fo;
         memset(vm, 0, sizeof vm);
         memset(vo, 0, sizeof vo);
@@ -399,7 +399,7 @@ static int compare_polygons(const char *kind, u64 label) {
         int nm = melon_3d_poly_count(), no = gpu3d_poly_count();
         for (int i = 0; i < (nm > no ? nm : no); i++) {
             Gpu3dVertexOut v[10];
-            u32 a, t, p;
+            uint32_t a, t, p;
             int f;
             for (int w = 0; w < 2; w++) {
                 memset(v, 0, sizeof v);
@@ -415,7 +415,7 @@ static int compare_polygons(const char *kind, u64 label) {
     int nm = melon_3d_poly_count(), no = gpu3d_poly_count();
     int n = nm < no ? nm : no, bad = -1;
     Gpu3dVertexOut vm[10], vo[10];
-    u32 am = 0, ao = 0, tm = 0, to = 0, pm = 0, po = 0;
+    uint32_t am = 0, ao = 0, tm = 0, to = 0, pm = 0, po = 0;
     int fm = 0, fo = 0, km = 0, ko = 0;
     for (int i = 0; i < n && bad < 0; i++) {
         memset(vm, 0, sizeof vm);
@@ -449,7 +449,7 @@ static int compare_polygons(const char *kind, u64 label) {
 static int compare_3d(const char *kind, u64 label) {
     sPix3dFrames++;
     melon_3d_lines(s3d);
-    const u32 *o = gpu3d_lines();
+    const uint32_t *o = gpu3d_lines();
     int first = -1, count = 0;
     for (int i = 0; i < 256 * 192; i++)
         if ((o[i] ^ s3d[i]) & 0x1f3f3f3f) { if (first < 0) first = i; count++; }
@@ -483,7 +483,7 @@ static int compare_3d(const char *kind, u64 label) {
             if (f) {
                 for (int i = 0; i < gpu3d_poly_count(); i++) {
                     Gpu3dVertexOut v[10];
-                    u32 a, t, p;
+                    uint32_t a, t, p;
                     int fl, k = gpu3d_poly_get(i, v, &a, &t, &p, &fl);
                     fprintf(f, "poly %08x %08x %04x %d %d", a, t, p, fl, k);
                     for (int j = 0; j < k; j++)
@@ -523,13 +523,13 @@ static void gpu3d_run_frame(void) {
 
 // ACWW_GPU2D_CHECK: the GPU's 2D pictures against the CPU's, word for word
 int render_check_gpu2d(void) {
-    static u32 gpu[256 * 384 * 2];
+    static uint32_t gpu[256 * 384 * 2];
     static long reported;
     if (!wdisp_read_2d(gpu)) return 1;
     sGpu2dChecked++;
     int count = 0, first = -1;
     for (int s = 0; s < 2; s++) {
-        const u32 *cpu = gpu2d_deferred(s);
+        const uint32_t *cpu = gpu2d_deferred(s);
         for (int i = 0; i < 256 * 192 * 2; i++)
             if (cpu[i] != gpu[s * 256 * 192 * 2 + i]) {
                 if (first < 0) first = s * 256 * 192 * 2 + i;
@@ -540,7 +540,7 @@ int render_check_gpu2d(void) {
     sGpu2dDiffering++;
     if (reported++ < sCompareMax) {
         int px = first / 2, s = px / (256 * 192), y = px / 256 % 192, x = px % 256, w = first & 1;
-        const u32 *cpu = gpu2d_deferred(s) + (y * 256 + x) * 2;
+        const uint32_t *cpu = gpu2d_deferred(s) + (y * 256 + x) * 2;
         char what[256];
         gpu2d_describe_pixel(s, x, y, what, sizeof what);
         fprintf(stderr, "gpu2d-check: frame %llu: %d words differ, first %s screen (%d, %d) word %d: cpu %08x %08x gpu "
@@ -556,7 +556,7 @@ static void render_hblank(int line, void *context) {
 }
 void render_frame(void) {
     // the 3D picture this frame shows (melonDS renders the next one in the frame)
-    const u32 *lines3d = s3d;
+    const uint32_t *lines3d = s3d;
     if (sGpu2d) {
         if (sGpuDisplay) lines3d = NULL;  // (the GPU's: gpu3d_wgpu_picture)
         else if (sOwn3d) lines3d = gpu3d_lines();
@@ -578,8 +578,8 @@ void render_frame(void) {
         in.gpu = sGpu2dMode;
         gpu2d_render_frame(&in);
         if (sGpuDisplay) {
-            const u32 *deferred[2] = {gpu2d_deferred(0), gpu2d_deferred(1)};
-            const u32 *lines[2] = {gpu2d_deferred_lines(0), gpu2d_deferred_lines(1)};
+            const uint32_t *deferred[2] = {gpu2d_deferred(0), gpu2d_deferred(1)};
+            const uint32_t *lines[2] = {gpu2d_deferred_lines(0), gpu2d_deferred_lines(1)};
             if (sGpu2dMode) wdisp_frame_2d(gpu2d_gpu_frame(), in.bank, lines, gpu3d_wgpu_picture(), sScale3d);
             else wdisp_frame(deferred, lines, gpu3d_wgpu_picture(), sScale3d);
             if (sGpu2dMode == 2 && !sSelftest) render_check_gpu2d();
@@ -592,7 +592,7 @@ void render_frame(void) {
     }
 }
 
-const u32 *render_screen(int screen) {
+const uint32_t *render_screen(int screen) {
     if (sGpuDisplay) return wdisp_screens() + 256 * 192 * (screen & 1);
     return sOwn ? gpu2d_screen(screen) : melon_screen(screen);
 }

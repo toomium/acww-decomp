@@ -546,7 +546,7 @@ static void fog_pass(void) {
 }
 
 // (diagnostics: ACWW_GPU3D_TIMING=1: the rasteriser's time per frame, printed every 1000 frames)
-#include <time.h>
+#include "../plat.h"  // (host_plat_time_ns: the C library's timespec_get isn't everywhere, e.g. newlib)
 static double sRenderNs, sRenderMax;
 static long sRenderFrames;
 static void timing_report(void) {
@@ -565,12 +565,12 @@ int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback) {
 void *gpu3d_wgpu_picture(void) { return g3w_picture(); }
 void g3_render(void) {
     static int timing = -1;
-    struct timespec t0, t1;
+    uint64_t t0 = 0;
     if (timing < 0) {
         timing = getenv("ACWW_GPU3D_TIMING") != 0;
         (void)timing_report;
     }
-    if (timing) timespec_get(&t0, TIME_UTC);
+    if (timing) t0 = host_plat_time_ns();
     sR = &gG3Render;
     g3_tex_setup();
     if (sWgpu)  // (the GPU's rasteriser: gpu3d_wgpu.c)
@@ -585,8 +585,7 @@ void g3_render(void) {
     sShown ^= 1;
     if (!sWgpu || sWgpuReadback) memcpy(sFrameBuf[sShown], sColor, sizeof sColor);
     if (timing) {
-        timespec_get(&t1, TIME_UTC);
-        double ns = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        double ns = (double)(host_plat_time_ns() - t0);
         sRenderNs += ns;
         if (ns > sRenderMax) sRenderMax = ns;
         sRenderFrames++;

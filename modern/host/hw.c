@@ -146,7 +146,7 @@ static void host_screenshot(void) {
             if (o) {
                 fprintf(o, "P6\n256 384\n255\n");
                 for (int s = 0; s < 2; s++) {
-                    const u32 *px = render_screen(s);
+                    const uint32_t *px = render_screen(s);
                     for (int i = 0; i < 256 * 192; i++) { u8 rgb[3] = {px[i] >> 16, px[i] >> 8, px[i]}; fwrite(rgb, 1, 3, o); }
                 }
                 fclose(o);
