@@ -691,3 +691,16 @@ the exheader can enable core 2 on the New 3DS (1.3).
   `C3D_TexLoadImage` has the GPU copy it to VRAM when it changed (for a VRAM texture it calls
   `C3D_SyncTextureCopy`, seen in libcitro3d's code). Azahar: the composited pictures' hashes as the build before,
   with and without `ACWW_WIDE`.
+- 2026-10-29: a crash when closing the app (the user's Luma3DS dump: a data abort on core 0 in libctru's
+  `gspEventThreadMain`, a write just below its stack pointer, in the heap). gspExit stops GSP's event thread only at
+  the last reference; pica_display.c and gpu3d_pica.c each took one (gspInit) and never gave it back, so the thread
+  ran on while the program's end freed the heap with its stack. Now both take it through `pdisp_gsp_init`, and the
+  frontend calls `pdisp_quit` before gfxExit (the GPU thread's work done, C3D_Fini, the references given back).
+  Azahar exits as before (it doesn't show the fault); on hardware **unverified**. Seen on the way (not changed):
+  Azahar starts the program without an argument list, and main.c reads `argv[0]` (a read at address 0).
+- 2026-10-29: `ACWW_SHOW_FPS=1`: "game frames / pictures" a second in the top screen's corner. On hardware in town
+  28-31 pictures (the user): the 3DS draws the screens every other frame (`ACWW_FRAMESKIP=1`), the game itself
+  draws a new 3D picture every third frame (20 a second), so 60 / 30 / 20 are three counts of the same run. The
+  game's frames go over 60 for a moment after a slow frame: the pacing catches up (hw.c, up to a second behind),
+  which keeps the sound's queue fed; left as it is (the user). Open: whether `ACWW_FRAMESKIP=2` (the pictures in
+  step with the 20 3D pictures, the 2D at 20) looks better.
