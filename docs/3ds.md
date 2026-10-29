@@ -704,3 +704,6 @@ the exheader can enable core 2 on the New 3DS (1.3).
   game's frames go over 60 for a moment after a slow frame: the pacing catches up (hw.c, up to a second behind),
   which keeps the sound's queue fed; left as it is (the user). Open: whether `ACWW_FRAMESKIP=2` (the pictures in
   step with the 20 3D pictures, the 2D at 20) looks better.
+- 2026-10-29, next (the user): an experiment on its own branch, `3ds-real-port` (from `3ds`): a "real" port, the
+  game's code adapted to the 3DS directly instead of the DS's hardware rebuilt beneath it. Its plan is
+  `docs/3ds-real-port.md` on that branch; this branch and its rules stay as they are.
