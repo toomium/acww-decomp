@@ -84,6 +84,29 @@ int host_plat_thread_start(void (*fn)(void *), void *arg) {
     return 1;
 }
 
+// on another core if there is one for us: the New 3DS's core 2, else core 1 (an application gets it only after
+// APT_SetAppCpuTimeLimit); else on the game's core at a higher priority (the kernel switches to it when its sleep
+// ends). The core is logged: whether the program can use one beside the game's is what docs/3ds.md's next step needs.
+int host_plat_sampler_start(void (*fn)(void *), void *arg) {
+    Result limit = APT_SetAppCpuTimeLimit(30);
+    s32 prio = 0x30;
+    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    static const int kCores[] = {2, 1, -2};
+    for (int i = 0; i < 3; i++) {
+        struct Start *s = malloc(sizeof *s);
+        if (!s) return 0;
+        s->fn = fn;
+        s->arg = arg;
+        if (threadCreate(thread_main, s, 16 * 1024, kCores[i] < 0 ? prio - 1 : 0x18, kCores[i], true)) {
+            fprintf(stderr, "3ds: the profile's sampler on core %d (APT_SetAppCpuTimeLimit(30): %08lx)\n",
+                    kCores[i] < 0 ? 0 : kCores[i], (unsigned long)limit);
+            return 1;
+        }
+        free(s);
+    }
+    return 0;
+}
+
 // (no guard page: a 3DS application can't change its memory's protection)
 void *host_plat_stack_alloc(size_t n, int flags) {
     (void)flags;
