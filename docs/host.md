@@ -159,7 +159,7 @@ advance. Headless runs default to the fixed 2026-04-01 12:00:00, the clock the o
 that scripted runs stay reproducible; `ACWW_RTC=host` gives them the local time), `ACWW_HEADLESS=1` (no window),
 `ACWW_FAST=1` (not paced to 60 Hz; `ACWW_FAST=<frame>`: not paced until that frame), `ACWW_SHOT="frame:file.ppm;..."`, `ACWW_KEYS="frame:frames:mask;..."`, `ACWW_TOUCH="frame:frames:x,y;..."`;
 `ACWW_WAV=file.wav` (the sound, also headless; ACWW_KEYS masks are hex KEYINPUT bits: 1 A, 2 B, 8 Start, 10 Right,
-20 Left, 40 Up, 80 Down, 400 X, 800 Y), `ACWW_MUTE=1`, `ACWW_VOLUME=<percent>` (the 3DS: the sound's volume, default 100), `ACWW_3DS_SCALE=1.25` (the 3DS: the screens 1.25 times, 320x240, instead of 1:1); debugging: `ACWW_STATS`, `ACWW_FPS` (every 120 frames: frames a second and the slowest frame, the renderers' time,
+20 Left, 40 Up, 80 Down, 400 X, 800 Y), `ACWW_MUTE=1`, `ACWW_VOLUME=<percent>` (the 3DS: the sound's volume, default 100), `ACWW_3DS_SCALE=1` (the 3DS: the screens 1:1 instead of 1.25 times); debugging: `ACWW_STATS`, `ACWW_FPS` (every 120 frames: frames a second and the slowest frame, the renderers' time,
 and a sampled profile: the milliseconds a frame in the game, the registers, DMA, the geometry engine, the renderers,
 sound, the frontend and the pacing - also where `ACWW_PROFILE`'s signals aren't), `ACWW_IOLOG=addr`,
 `ACWW_IOHIST` (register accesses by address and calling code, to `acww_iohist.txt`; written at exit, on SIGINT and
