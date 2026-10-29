@@ -106,7 +106,7 @@ static void prof_sampler(void *arg) {
 }
 static void prof_report(double frameMs) {
     static const char *const kNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
-                                               "sound", "frontend", "pacing"};
+                                               "sound", "frontend", "pacing", "GPU wait"};
     static u32 seen[PROF_N];
     u32 n[PROF_N], total = 0;
     for (int i = 0; i < PROF_N; i++) {
