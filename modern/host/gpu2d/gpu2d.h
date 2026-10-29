@@ -76,6 +76,10 @@ typedef struct Gpu2dFrameInput {
     int gpu;
     // the layers to the caller instead of the pictures (gpu2d_screen then stale); NULL: none
     Gpu2dLayers *layers;
+    // with layers: only each line's state recorded here (with the H-blanks), and VRAM's banks, the palettes and OAM
+    // copied; the layers are drawn from that by gpu2d_draw_layers, later and on another thread (the 3DS's GPU
+    // thread). Gpu2dLayers.bgGran and .palette then point to the copies.
+    int deferLayers;
 } Gpu2dFrameInput;
 
 void gpu2d_reset(void);
@@ -86,6 +90,8 @@ void gpu2d_write32(uint32_t addr, uint32_t value);
 uint32_t gpu2d_read32(uint32_t addr);  // what was written (diagnostics)
 
 void gpu2d_render_frame(const Gpu2dFrameInput *in);
+// the layers of the last frame recorded with deferLayers (until the next gpu2d_render_frame, which mustn't overlap it)
+void gpu2d_draw_layers(void);
 // screen 0 top, 1 bottom (POWCNT1 bit 15 decides which engine shows where): 256x192 pixels, 0xffRRGGBB
 const uint32_t *gpu2d_screen(int screen);
 

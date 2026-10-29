@@ -140,7 +140,7 @@ static void prof_report(double frameMs) {
         if (!total || (t == 1 && n[PROF_IDLE] == total)) continue;  // (no GPU thread: always idle)
         fprintf(stderr, "profile%s: %u samples, ms a frame:", t ? ", the GPU thread" : "", total);
         for (int i = 0; i < PROF_N; i++)
-            if (t == 0 ? i != PROF_IDLE : (i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_IDLE))
+            if (t == 0 ? i != PROF_IDLE : (i == PROF_2D || i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_IDLE))
                 fprintf(stderr, " %s %.1f", kNames[i], frameMs * n[i] / total);
         fprintf(stderr, "\n");
     }

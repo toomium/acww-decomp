@@ -656,6 +656,7 @@ void render_frame(void) {
         in.defer3d = sGpuDisplay;
         in.gpu = sGpu2dMode;
         in.layers = sPica ? pdisp_layers() : NULL;
+        in.deferLayers = sPica;  // (drawn by the GPU thread: pica_display.c)
         gpu2d_render_frame(&in);
         if (sGpuDisplay) {
             const uint32_t *deferred[2] = {gpu2d_deferred(0), gpu2d_deferred(1)};

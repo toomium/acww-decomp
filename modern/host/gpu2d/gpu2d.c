@@ -17,6 +17,7 @@ static u32 sFrame;        // frames rendered
 static int sDefer3d;      // the 3D layer left to the caller (Gpu2dFrameInput.defer3d)
 static int sGpu;          // Gpu2dFrameInput.gpu: 1 record the frame for a GPU, 2 and draw it here too
 static Gpu2dLayers *sLayers;  // Gpu2dFrameInput.layers
+static int sDeferLayers;  // Gpu2dFrameInput.deferLayers (with sLayers)
 static Gpu2dGpuFrame sGpuFrame;
 static u8 sPalettes[GPU2D_MAX_VERSIONS][0x800], sOams[GPU2D_MAX_VERSIONS][0x800];
 static u32 sDeferred[2][SCREEN_W * SCREEN_H * 2], sDeferredLines[2][SCREEN_H];  // (gpu2d_deferred)
@@ -518,6 +519,13 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
 
 static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
     u32 dispcnt = reg32(e, REG_DISPCNT), *dst = e->out + line * SCREEN_W;
+    u16 powcnt = e->powcnt;
+    if (sDeferLayers && in) {  // (recorded for gpu2d_draw_layers, which draws with in NULL: the state the drawing
+                               // below changes, as the GPU's)
+        if (!(e->num == 1 && !(powcnt & 0x200)) && !(dispcnt & 0x80)) window_advance(e);
+        obj_mosaic_y(e, line);
+        return;
+    }
     if (sLayers) {  // (the caller composites: the layers and the state)
         Gpu2dLineState *ls = &sLayers->line[e->num][line];
         s32 hofs3d = reg16(e, REG_BGHOFS) & 0x1ff;
@@ -527,7 +535,7 @@ static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
         ls->masterBright = reg16(e, REG_MASTER_BRIGHT);
         ls->hofs3d = (int16_t)(hofs3d & 0x100 ? hofs3d - 0x200 : hofs3d);
         u32 mode = dispcnt >> 16 & (e->num ? 1 : 3);
-        ls->white = (e->num == 1 && !(sPowCnt & 0x200)) || (dispcnt & 0x80) || mode != 1;
+        ls->white = (e->num == 1 && !(powcnt & 0x200)) || (dispcnt & 0x80) || mode != 1;
         if (mode == 0) gpu2d_feature(e, F_DISPLAY_OFF);
         if (mode >= 2) gpu2d_feature(e, mode == 2 ? F_DISPLAY_VRAM : F_DISPLAY_FIFO);
         if (dispcnt & 0x80) gpu2d_feature(e, F_FORCED_BLANK);
@@ -550,7 +558,7 @@ static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
             sLayers->ref[e->num][line][2 * i] = e->refX[i] + ls->affine[i][1] * (line - e->refLine);
             sLayers->ref[e->num][line][2 * i + 1] = e->refY[i] + ls->affine[i][3] * (line - e->refLine);
         }
-        if (!(e->num == 1 && !(sPowCnt & 0x200)) && !(dispcnt & 0x80)) {
+        if (!(e->num == 1 && !(powcnt & 0x200)) && !(dispcnt & 0x80)) {
             for (int n = 0; n < 4; n++)
                 if (!(ls->gpuBg >> n & 1)) gpu2d_render_bg_line(e, n, line);
             layers_line(e, line, ls);
@@ -560,7 +568,7 @@ static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
     }
     if (sGpu == 1) {  // (drawn by the GPU: only the state that goes from line to line, as below)
         e->lineInfo[line] = reg16(e, REG_MASTER_BRIGHT) | (u32)(reg16(e, REG_BGHOFS) & 0x1ff) << 16;
-        if (e->num == 1 && !(sPowCnt & 0x200)) return;
+        if (e->num == 1 && !(powcnt & 0x200)) return;
         if (!(dispcnt & 0x80)) window_advance(e);
         obj_mosaic_y(e, line);
         return;
@@ -574,12 +582,12 @@ static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
         memset(defer, 0, SCREEN_W * sizeof *defer);
         e->lineInfo[line] = 0;
     }
-    if (e->num == 1 && !(sPowCnt & 0x200)) {  // engine B switched off (POWCNT1 bit 9): white, no brightness
+    if (e->num == 1 && !(powcnt & 0x200)) {  // engine B switched off (POWCNT1 bit 9): white, no brightness
         gpu2d_feature(e, F_ENGINE_B_OFF);
         for (int x = 0; x < SCREEN_W; x++) dst[x] = 0x3f3f3f;
         return;
     }
-    if (e->num == 0 && !(sPowCnt & 2)) gpu2d_feature(e, F_ENGINE_A_OFF);
+    if (e->num == 0 && !(powcnt & 2)) gpu2d_feature(e, F_ENGINE_A_OFF);
     if (e->num == 0 && (reg32(e, REG_DISPCAPCNT) & 1u << 31)) gpu2d_feature(e, F_CAPTURE);
     gpu2d_feature(e, (enum Feature)(F_MODE0 + (dispcnt & 7)));
     // the BG and OBJ picture is made whatever the display mode (the windows' state advances with it)
@@ -661,9 +669,8 @@ static u32 pack_obj(const ObjLine *o, int x) {
     return o->value[x] | (u32)o->source[x] << 16 | (u32)o->prio[x] << 18 | (u32)o->kind[x] << 20 |
            (u32)o->alpha[x] << 22 | (u32)(o->mosaic[x] & 1) << 26 | (u32)(o->window[x] & 1) << 27;
 }
-static void gpu_line(int n, int line) {
+static void gpu_line_to(int n, u32 *l) {
     const Engine *e = &sEngine[n];
-    u32 *l = sGpuFrame.lines[n][line];
     memset(l, 0, GPU2D_LINE_WORDS * sizeof *l);
     for (int k = 0; k < REG_SIZE / 4; k++) l[G2L_REGS + k] = reg32(e, (u32)k * 4);
     for (int i = 0; i < 2; i++) l[G2L_REF + 2 * i] = (u32)e->refX[i], l[G2L_REF + 2 * i + 1] = (u32)e->refY[i];
@@ -673,6 +680,7 @@ static void gpu_line(int n, int line) {
     l[G2L_OAM] = sGpuFrame.oamCount - 1;
     l[G2L_POWCNT] = sPowCnt;
 }
+static void gpu_line(int n, int line) { gpu_line_to(n, sGpuFrame.lines[n][line]); }
 // after an H-blank: a new version of the palettes or OAM if it changed them
 static void gpu_versions(const Gpu2dFrameInput *in) {
     Gpu2dGpuFrame *f = &sGpuFrame;
@@ -683,11 +691,84 @@ static void gpu_versions(const Gpu2dFrameInput *in) {
 }
 const Gpu2dGpuFrame *gpu2d_gpu_frame(void) { return &sGpuFrame; }
 
+// ---- the layers recorded and drawn later (Gpu2dFrameInput.deferLayers): each line's state as for a GPU (gpu_line,
+// the palettes' and OAM's versions), line 0's OBJs as prepared, and the 2D banks of VRAM copied (with the composites
+// of overlapping ones); gpu2d_draw_layers then draws each line with engines that take that state
+static u8 sVramCopy[0xa4000], sOverlapCopy[sizeof sOverlap];
+static const u8 *sCopyGran[2][2][32], *sCopyExt[2][5];  // per engine: BG, OBJ granules; BG ext slots, OBJ ext
+static ObjLine sCopyObj0[2];
+static int sCopyHaveObj0[2];
+static const u8 *copied(const Gpu2dFrameInput *in, const u8 *p) {
+    static const u32 kOffset[9] = GPU2D_BANK_OFFSET;
+    if (!p) return p;
+    for (int i = 0; i < 9; i++)
+        if (p >= in->bank[i] && p < in->bank[i] + kBankSize[i]) return sVramCopy + kOffset[i] + (p - in->bank[i]);
+    if (p >= sOverlap[0] && p < sOverlap[0] + sizeof sOverlap) return sOverlapCopy + (p - sOverlap[0]);
+    return p;  // (kZeroGranule)
+}
+static void copy_vram(const Gpu2dFrameInput *in) {
+    static const u32 kOffset[9] = GPU2D_BANK_OFFSET;
+    for (int i = 0; i < 9; i++) {
+        u32 ofs;
+        const u32 *mirrors;
+        if (bank_target(i, sVramCnt[i], &ofs, &mirrors) != AREA_NONE)
+            memcpy(sVramCopy + kOffset[i], in->bank[i], kBankSize[i]);
+    }
+    memcpy(sOverlapCopy, sOverlap, (size_t)sOverlapUsed * GRANULE);
+    for (int n = 0; n < 2; n++) {
+        const Engine *e = &sEngine[n];
+        for (int k = 0; k < 32; k++) sCopyGran[n][0][k] = copied(in, e->bgGran[k]);
+        for (int k = 0; k < 16; k++) sCopyGran[n][1][k] = copied(in, e->objGran[k]);
+        for (int k = 0; k < 4; k++) sCopyExt[n][k] = copied(in, e->bgExtPal[k]);
+        sCopyExt[n][4] = copied(in, e->objExtPal);
+    }
+}
+
+void gpu2d_draw_layers(void) {
+    static Engine draw[2];  // (the drawing thread's: the state from the record line by line)
+    const Gpu2dGpuFrame *f = &sGpuFrame;
+    for (int n = 0; n < 2; n++) {
+        Engine *d = &draw[n];
+        d->num = n;
+        memcpy(d->bgGran, sCopyGran[n][0], sizeof d->bgGran);
+        memcpy(d->objGran, sCopyGran[n][1], sizeof d->objGran);
+        d->bgMask = sEngine[n].bgMask, d->objMask = sEngine[n].objMask;
+        memcpy(d->bgExtPal, sCopyExt[n], sizeof d->bgExtPal);
+        d->objExtPal = sCopyExt[n][4];
+    }
+    for (int line = 0; line < SCREEN_H; line++)
+        for (int n = 0; n < 2; n++) {
+            Engine *d = &draw[n];
+            const u32 *l = f->lines[n][line];
+            for (int k = 0; k < REG_SIZE / 4; k++) memcpy(d->regs + 4 * k, &l[G2L_REGS + k], 4);
+            for (int i = 0; i < 2; i++) d->refX[i] = (s32)l[G2L_REF + 2 * i], d->refY[i] = (s32)l[G2L_REF + 2 * i + 1];
+            d->refLine = line;
+            d->winActive[0] = l[G2L_WIN] & 3, d->winActive[1] = l[G2L_WIN] >> 2 & 3;
+            d->objMosaicLine = (int)l[G2L_OBJMOSAIC];
+            d->powcnt = (u16)l[G2L_POWCNT];
+            d->palette = f->palettes + 0x800 * l[G2L_PALETTE] + 0x400 * n;
+            d->oam = f->oams + 0x800 * l[G2L_OAM] + 0x400 * n;
+            if (line == 0 && sCopyHaveObj0[n]) d->obj = sCopyObj0[n];
+            else if (line == 0) memset(&d->obj, 0, sizeof d->obj);
+            else gpu2d_render_obj_line(d, line, &d->obj);
+            render_line(d, 0, line);
+        }
+}
+
 void gpu2d_render_frame(const Gpu2dFrameInput *in) {
     sGpu = in->gpu;
     sDefer3d = in->defer3d || sGpu;
     sLayers = in->layers;
+    sDeferLayers = sLayers && in->deferLayers;
     map_vram(in);
+    if (sDeferLayers) {
+        sGpuFrame.palettes = sPalettes[0];
+        sGpuFrame.oams = sOams[0];
+        memcpy(sPalettes[0], in->palette, 0x800);
+        memcpy(sOams[0], in->oam, 0x800);
+        sGpuFrame.paletteCount = sGpuFrame.oamCount = 1;
+        for (int n = 0; n < 2; n++) sCopyObj0[n] = sEngine[n].objNextLine0, sCopyHaveObj0[n] = sEngine[n].haveNextLine0;
+    }
     if (sGpu) {
         gpu_tables(in);
         sGpuFrame.palettes = sPalettes[0];
@@ -717,17 +798,18 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
         for (int n = 0; n < 2; n++) {
             Engine *e = &sEngine[n];
             window_vertical(e, line);
+            e->powcnt = sPowCnt;
             // OBJs are prepared a line ahead (during the line before): line 0's during the previous frame's
             // last line, before this frame's register, OAM and VRAM changes
-            if (sGpu) gpu_line(n, line);
-            if (sGpu == 1) {}  // (the GPU draws the OBJs)
+            if (sGpu || sDeferLayers) gpu_line(n, line);
+            if (sGpu == 1 || sDeferLayers) {}  // (the GPU draws the OBJs; gpu2d_draw_layers)
             else if (line == 0 && e->haveNextLine0) e->obj = e->objNextLine0;
             else if (line == 0) memset(&e->obj, 0, sizeof e->obj);
             else gpu2d_render_obj_line(e, line, &e->obj);
             render_line(e, in, line);
         }
         if (in->hblank) in->hblank(line, in->hblankContext);
-        if (sGpu) gpu_versions(in);
+        if (sGpu || sDeferLayers) gpu_versions(in);
         for (int n = 0; n < 2; n++) {  // the internal reference points: the next line's
             Engine *e = &sEngine[n];
             for (int i = 0; i < 2; i++) {
@@ -750,10 +832,12 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
     // to the screens: engine A on the top screen if POWCNT1 bit 15 is set
     if (sLayers) {
         sLayers->topEngine = (sPowCnt & 0x8000) ? 0 : 1;
+        if (sDeferLayers) copy_vram(in);
         for (int n = 0; n < 2; n++) {
-            sLayers->bgGran[n] = sEngine[n].bgGran;
+            sLayers->bgGran[n] = sDeferLayers ? sCopyGran[n][0] : sEngine[n].bgGran;
             sLayers->bgMask[n] = sEngine[n].bgMask;
-            sLayers->palette[n] = sEngine[n].palette;
+            // (deferred: the palettes as at the end, their last version)
+            sLayers->palette[n] = sDeferLayers ? sPalettes[sGpuFrame.paletteCount - 1] + 0x400 * n : sEngine[n].palette;
         }
         sFrame++;
         return;

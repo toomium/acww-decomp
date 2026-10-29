@@ -71,6 +71,7 @@ typedef struct Engine {
     int refLine;
     u8 refWritten[2];
     u8 winActive[2];           // windows 0 and 1: bit 0 inside vertically, bit 1 horizontally (gpu2d.c)
+    u16 powcnt;                // POWCNT1 for the line being drawn
     // the line buffers
     u16 bg[4][SCREEN_W];
     ObjLine obj;
