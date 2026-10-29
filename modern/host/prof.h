@@ -11,6 +11,7 @@ enum {
     PROF_LIGHT, PROF_VERTEX,  // the geometry engine's lighting, and its vertices and polygons (setup, clipping)
     PROF_WAIT,  // waiting for the GPU thread (the 3DS: pica_display.c)
     PROF_IDLE,  // (the GPU thread's marker: nothing to do)
+    PROF_ROM,   // reading the ROM (card.c: from the file, through its cache)
     PROF_N
 };
 extern volatile int gHostProf;
