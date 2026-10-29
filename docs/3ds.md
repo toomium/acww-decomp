@@ -510,3 +510,11 @@ the exheader can enable core 2 on the New 3DS (1.3).
   menu (the sampler woke while the program's end had freed its stack; the background threads stop first now).
   Next: what the registers' time is (ROM reads through the card registers?), the geometry engine, then the 2D
   renderer on core 2 (record each line's state on core 0, draw on core 2).
+- 2026-10-29: the 2D renderer's layers on core 2 too: on the game's core the 2D renderer only records each line's
+  state (the line loop with the H-blanks, as for the PC's GPU display: `gpu_line`, the palettes' and OAM's
+  versions) and copies VRAM's 2D banks; the GPU thread draws the layers (`gpu2d_draw_layers`) before compositing.
+  Exact in Azahar (attract demo and save script, with and without the thread and delays). Also the registers:
+  ROM reads have their own part in the profile, a 3D command block after its first word goes at once when nothing
+  between can make an interrupt due (Azahar registers 5.9-6.6 -> 5.1-5.6 ms); the geometry engine copies a
+  polygon's vertices only when a plane cuts it (Azahar vertices 5.7-6.0 -> 4.7-5.3 ms). Without drawing on the PC
+  20000 frames take 12.5-12.8 s (was 13.6-13.9 this morning).
