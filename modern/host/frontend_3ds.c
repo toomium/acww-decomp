@@ -73,9 +73,17 @@ static void show(gfxScreen_t screen, const uint32_t *px) {
     }
 }
 
+// the home menu and sleep: the GPU thread's work done first (pica_display.c)
+static aptHookCookie sAptHook;
+static void apt_hook(APT_HookType hook, void *param) {
+    (void)param;
+    if (hook == APTHOOK_ONSUSPEND || hook == APTHOOK_ONSLEEP || hook == APTHOOK_ONEXIT) pdisp_idle();
+}
+
 AcwwShm *frontend_backend_open(const char *argv0) {
     (void)argv0;
     gfxInitDefault();
+    aptHook(&sAptHook, apt_hook, 0);
     pdisp_attach_screens();  // (when the GPU composites, it shows the screens)
     sShm.magic = ACWW_SHM_MAGIC;
     open_audio();
@@ -109,6 +117,7 @@ void frontend_backend_frame(AcwwShm *shm) {
 }
 
 void frontend_backend_close(void) {
+    pdisp_idle();
     if (sWaveData) { ndspExit(); linearFree(sWaveData); sWaveData = 0; }
     gfxExit();
 }

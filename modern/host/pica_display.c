@@ -29,6 +29,8 @@ void pdisp_attach_screens(void) {}
 struct Gpu2dLayers *pdisp_layers(void) { return 0; }
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
+void pdisp_submit(void (*job)(void *), void *arg) { job(arg); }
+void pdisp_idle(void) {}
 
 #else
 
@@ -75,6 +77,60 @@ static const u32 kTiledToLinear = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TIL
                                   GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO) |
                                   GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
                                   GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8);
+
+// ---- the GPU thread (docs/3ds.md): the 3D pictures (gpu3d_pica.c) and the compositing on the New 3DS's core 2,
+// while the game's thread goes on with the next frame. One job at a time: the game's thread waits for the last one
+// before it submits another and before it changes what a job reads (render.c: the 3D engine's list and textures,
+// the 2D renderer's layers); VRAM and the BG palettes, which the game changes when it likes, are copied for the
+// compositing (snapshot). citro3d is the GPU thread's then: the game's thread uses it only when that is idle.
+// Without core 2 (an Old 3DS; ACWW_PICA_THREAD=0) the jobs are done at once. For the check that a job sees what it
+// would at once: ACWW_PICA_DELAY=<ms>, each job waits that long first; ACWW_PICA_HASH=1, a hash of each composited
+// picture in the log.
+volatile int *gPicaProf = &gHostProf;
+static Thread sWorker;
+static LightEvent sGo, sDone;
+static void (*sJob)(void *);
+static void *sJobArg;
+static int sPending;  // (the game's thread's: a job was submitted whose end it hasn't waited for)
+static int sDelayMs;
+
+static void worker(void *arg) {
+    (void)arg;
+    for (;;) {
+        LightEvent_Wait(&sGo);
+        if (sDelayMs) svcSleepThread((s64)sDelayMs * 1000000);
+        sJob(sJobArg);
+        LightEvent_Signal(&sDone);
+    }
+}
+static void start_worker(void) {
+    static int tried;
+    if (tried++) return;
+    const char *e = getenv("ACWW_PICA_THREAD");
+    if (e && !atoi(e)) return;
+    sDelayMs = getenv("ACWW_PICA_DELAY") ? atoi(getenv("ACWW_PICA_DELAY")) : 0;
+    LightEvent_Init(&sGo, RESET_ONESHOT);
+    LightEvent_Init(&sDone, RESET_ONESHOT);
+    s32 prio = 0x30;
+    svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
+    sWorker = threadCreate(worker, 0, 64 * 1024, prio, 2, true);
+    if (sWorker) gPicaProf = &gHostProfWorker;
+    fprintf(stderr, "3ds: the GPU work %s\n", sWorker ? "on core 2" : "on the game's core (no core 2)");
+}
+void pdisp_idle(void) {
+    if (!sPending) return;
+    HOST_PROF(PROF_WAIT);
+    LightEvent_Wait(&sDone);
+    sPending = 0;
+}
+void pdisp_submit(void (*job)(void *), void *arg) {
+    start_worker();
+    if (!sWorker) { job(arg); return; }
+    pdisp_idle();
+    sJob = job, sJobArg = arg;
+    sPending = 1;
+    LightEvent_Signal(&sGo);
+}
 
 static int tex(C3D_Tex *t, GPU_TEXCOLOR fmt) {
     if (!C3D_TexInit(t, TEX, TEX, fmt)) return 0;
@@ -175,17 +231,47 @@ static void bg_tile(BgTex *t, int tx, int ty, u16 entry) {
         }
 }
 
+// where BG n's tile data (cb) and map (mb) are, its size and colours
+static void bg_layout(int e, int n, const Gpu2dLineState *s, int *w, int *h, int *color256, u32 *cb, u32 *mb) {
+    u16 cnt = s->bgcnt[n];
+    *cb = (cnt >> 2 & 15) * 0x4000u, *mb = (cnt >> 8 & 31) * 0x800u;
+    if (e == 0) *cb += (s->dispcnt >> 24 & 7) * 0x10000u, *mb += (s->dispcnt >> 27 & 7) * 0x10000u;
+    if (s->bgKind[n] == 1) *w = cnt & 0x4000 ? 512 : 256, *h = cnt & 0x8000 ? 512 : 256, *color256 = (cnt & 0x80) != 0;
+    else *w = *h = 128 << (cnt >> 14), *color256 = 1;
+}
+// the highest tile a map uses (kind 2: 8-bit entries)
+static u32 max_tile(const u16 *map, int count, int kind) {
+    u32 m = 0;
+    for (int i = 0; i < count; i++) {
+        u32 tile = kind == 2 ? map[i] : map[i] & 0x3ffu;
+        if (tile > m) m = tile;
+    }
+    return m;
+}
+// the map's entries into out, as the texture lays them out (32x32-tile blocks of 2 KB, left to right, then down)
+static void read_map(u16 *out, const u8 *const *gran, u32 mask, u32 mb, int tw, int th, int kind) {
+    if (kind == 2) {
+        static u8 m8[128 * 128];
+        vram_copy(m8, gran, mask, mb, (u32)(tw * th));
+        for (int i = 0; i < tw * th; i++) out[i] = m8[i];
+        return;
+    }
+    for (int by = 0; by < th / 32; by++)
+        for (int bx = 0; bx < tw / 32; bx++) {
+            static u16 block[32 * 32];
+            vram_copy((u8 *)block, gran, mask, mb + (u32)(by * (tw / 32) + bx) * 0x800u, 0x800);
+            for (int y = 0; y < 32; y++) memcpy(&out[(by * 32 + y) * tw + bx * 32], &block[y * 32], 64);
+        }
+}
+
 // BG n of an engine as its texture, brought up to date with VRAM: 0 if it can't be
 static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
     BgTex *t = &sBgTex[e][n];
     if (t->kind && t->frame == sFrame) return t;  // (once a frame: VRAM as at its end)
     t->frame = sFrame;
-    u16 cnt = s->bgcnt[n];
     int kind = s->bgKind[n], w, h, color256;
-    u32 cb = (cnt >> 2 & 15) * 0x4000u, mb = (cnt >> 8 & 31) * 0x800u;
-    if (e == 0) cb += (s->dispcnt >> 24 & 7) * 0x10000u, mb += (s->dispcnt >> 27 & 7) * 0x10000u;
-    if (kind == 1) w = cnt & 0x4000 ? 512 : 256, h = cnt & 0x8000 ? 512 : 256, color256 = (cnt & 0x80) != 0;
-    else w = h = 128 << (cnt >> 14), color256 = 1;
+    u32 cb, mb;
+    bg_layout(e, n, s, &w, &h, &color256, &cb, &mb);
     int full = 0;
     if (t->kind != kind || t->w != w || t->h != h) {
         if (t->kind) C3D_TexDelete(&t->tex);
@@ -203,22 +289,9 @@ static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
     if (memcmp(t->pal, sLayers.palette[e], 0x200)) full = 1, memcpy(t->pal, sLayers.palette[e], 0x200);
     // the map first: the tiles it uses (up to the highest one) are those to compare
     int tw = w / 8, th = h / 8, drawn = 0;
-    u32 tileBytes = color256 ? 64 : 32, maxTile = 0;
-    if (kind == 2) {
-        static u8 m8[128 * 128];
-        vram_copy(m8, gran, mask, mb, (u32)(tw * th));
-        for (int i = 0; i < tw * th; i++) sTmpMap[i] = m8[i];
-    } else
-        for (int by = 0; by < th / 32; by++)  // (32x32-tile blocks of 2 KB, left to right, then down)
-            for (int bx = 0; bx < tw / 32; bx++) {
-                static u16 block[32 * 32];
-                vram_copy((u8 *)block, gran, mask, mb + (u32)(by * (tw / 32) + bx) * 0x800u, 0x800);
-                for (int y = 0; y < 32; y++) memcpy(&sTmpMap[(by * 32 + y) * tw + bx * 32], &block[y * 32], 64);
-            }
-    for (int i = 0; i < tw * th; i++) {
-        u32 tile = kind == 2 ? sTmpMap[i] : sTmpMap[i] & 0x3ffu;
-        if (tile > maxTile) maxTile = tile;
-    }
+    u32 tileBytes = color256 ? 64 : 32;
+    read_map(sTmpMap, gran, mask, mb, tw, th, kind);
+    u32 maxTile = max_tile(sTmpMap, tw * th, kind);
     // the tile data, compared where it is in 1 KB pieces (in one 16 KB granule each: the character base is in 16 KB
     // steps), then the tiles of a piece that differs
     static u8 dirty[1024];
@@ -485,7 +558,7 @@ static void group(const Group *g) {
 
 static void upload(void *src, C3D_Tex *t, u32 bytes, GX_TRANSFER_FORMAT fmt) {
     GSPGPU_FlushDataCache(src, bytes);
-    HOST_PROF(PROF_GPU);
+    HOST_PROF_ON(gPicaProf, PROF_GPU);
     C3D_SyncDisplayTransfer(src, GX_BUFFER_DIM(W, H), t->data, GX_BUFFER_DIM(W, H),
                             kLinearToTiled | GX_TRANSFER_IN_FORMAT(fmt) | GX_TRANSFER_OUT_FORMAT(fmt));
 }
@@ -511,8 +584,79 @@ static int same_gpu_state(const Gpu2dLineState *a, const Gpu2dLineState *b) {
            a->white == b->white;
 }
 
+// ---- the snapshot: what bg_texture reads from VRAM, copied at the same places into a copy of each engine's BG VRAM
+// (the map and the tile data up to its highest tile, for every BG state a line has where the GPU draws the BG), and
+// the BG palettes; the layers then point to the copies
+static u8 sSnapVram[2][0x80000];
+static const u8 *sSnapGran[2][32];
+static u8 sSnapPal[2][0x200];
+static u32 sSnapBytes;
+static void snap_copy(int e, u32 addr, u32 len) {
+    const u8 *const *gran = sLayers.bgGran[e];
+    u32 mask = sLayers.bgMask[e];
+    sSnapBytes += len;
+    while (len) {
+        u32 a = addr & mask, in = 0x4000 - (a & 0x3fff), n = in < len ? in : len;
+        memcpy(sSnapVram[e] + a, gran[a >> 14] + (a & 0x3fff), n);
+        addr += n, len -= n;
+    }
+}
+static void snapshot(void) {
+    sSnapBytes = 0;
+    for (int e = 0; e < 2; e++) {
+        u16 last[4] = {0};
+        u32 lastBase[4] = {0};
+        u8 lastKind[4] = {0};
+        for (int y = 0; y < H; y++) {
+            const Gpu2dLineState *s = &sLayers.line[e][y];
+            if (s->white) continue;
+            for (int n = 0; n < 4; n++) {
+                // (as group / layer_bind: shown, drawn by the GPU, not the 3D layer)
+                if (!(s->dispcnt & 0x100u << n) || !(s->gpuBg >> n & 1) || (n == 0 && e == 0 && (s->dispcnt & 8)))
+                    continue;
+                u32 base = e == 0 ? s->dispcnt & 0x3f000000u : 0;
+                if (lastKind[n] && last[n] == s->bgcnt[n] && lastBase[n] == base && lastKind[n] == s->bgKind[n])
+                    continue;
+                last[n] = s->bgcnt[n], lastBase[n] = base, lastKind[n] = s->bgKind[n];
+                int w, h, color256, kind = s->bgKind[n];
+                u32 cb, mb;
+                bg_layout(e, n, s, &w, &h, &color256, &cb, &mb);
+                int tw = w / 8, th = h / 8;
+                snap_copy(e, mb, (u32)(tw * th) * (kind == 2 ? 1 : 2));
+                read_map(sTmpMap, sSnapGran[e], sLayers.bgMask[e], mb, tw, th, kind);
+                u32 len = ((max_tile(sTmpMap, tw * th, kind) + 1) * (color256 ? 64u : 32u) + 1023) & ~1023u;
+                snap_copy(e, cb, len);
+            }
+        }
+        memcpy(sSnapPal[e], sLayers.palette[e], 0x200);
+        sLayers.bgGran[e] = sSnapGran[e];
+        sLayers.palette[e] = sSnapPal[e];
+    }
+}
+
+static void frame_job(void *arg);
+static void *sTexture3d;
+static const uint32_t *sPicture3d;
+static int sHash = -1;
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
+    pdisp_idle();  // (the last job's snapshot and 3D picture)
     sScreenRead[0] = sScreenRead[1] = 0;
+    if (!sSnapGran[0][0])
+        for (int e = 0; e < 2; e++)
+            for (int k = 0; k < 32; k++) sSnapGran[e][k] = sSnapVram[e] + k * 0x4000;
+    snapshot();
+    static u32 frames, bytes;
+    bytes += sSnapBytes;
+    if (++frames == 300 && getenv("ACWW_FPS")) fprintf(stderr, "pica: the snapshot %lu KB a frame\n", (unsigned long)(bytes / 300 / 1024));
+    sTexture3d = texture3d, sPicture3d = picture3d;
+    pdisp_submit(frame_job, 0);
+}
+
+static void frame_job(void *arg) {
+    (void)arg;
+    HOST_PROF_ON(gPicaProf, PROF_COMP);
+    void *texture3d = sTexture3d;
+    const uint32_t *picture3d = sPicture3d;
     sFrame++;
     s3dTex = texture3d ? (C3D_Tex *)texture3d : &s3d;
     s3dPremultiplied = texture3d != 0;
@@ -526,7 +670,7 @@ void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
         for (int y = 0; y < H; y++)
             if (!sLayers.line[e][y].white) used[e] |= sLayers.line[e][y].dispcnt, cpuBg[e] |= ~sLayers.line[e][y].gpuBg & 15u;
     {
-        HOST_PROF(PROF_GPU);
+        HOST_PROF_ON(gPicaProf, PROF_GPU);
         C3D_FrameBegin(0);  // (waits for the GPU's work before)
     }
     for (int e = 0; e < 2; e++) {
@@ -594,9 +738,21 @@ void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
     }
     GSPGPU_FlushDataCache(sV, (u32)sNV * sizeof(DVertex));
     C3D_FrameEnd(0);
+    if (sHash < 0) sHash = getenv("ACWW_PICA_HASH") && atoi(getenv("ACWW_PICA_HASH"));
+    if (sHash) {  // (both engines' pictures read back: FNV-1a)
+        u32 hash = 2166136261u;
+        for (int e = 0; e < 2; e++) {
+            C3D_SyncDisplayTransfer((u32 *)sComp[e].data, GX_BUFFER_DIM(TEX, TEX), sReadback, GX_BUFFER_DIM(TEX, TEX),
+                                    kTiledToLinear);
+            GSPGPU_InvalidateDataCache(sReadback, TEX * TEX * 4);
+            for (int i = 0; i < W * H; i++) hash = (hash ^ sReadback[i]) * 16777619u;
+        }
+        fprintf(stderr, "pica: picture %u hash %08lx\n", (unsigned)sFrame, (unsigned long)hash);
+    }
 }
 
 const uint32_t *pdisp_screen(int screen) {
+    pdisp_idle();  // (citro3d and the pictures)
     int s = screen & 1, e = s == 0 ? sLayers.topEngine : 1 - sLayers.topEngine;
     if (!sV) return sScreenPx[s];
     if (!sScreenRead[s]) {

@@ -535,6 +535,7 @@ int render_compare_3d(const char *kind, u64 label) {
 }
 
 static void gpu3d_run_frame(void) {
+    if (sPica) pdisp_idle();  // (the GPU thread's 3D picture is drawn from the list and textures this changes)
     const u8 *banks[9];
     for (int i = 0; i < 9; i++) banks[i] = host_vram_bank(i);
     u32 host_vram_generation(void);
@@ -630,6 +631,7 @@ void render_frame(void) {
     }
     if (sMelon) melon_frame();
     HOST_PROF(PROF_2D);
+    if (sPica) pdisp_idle();  // (the GPU thread composites from the layers the 2D renderer makes)
     u64 t0 = host_plat_time_ns();
     if (sGpu2d || sGpu3d) host_vram_flush();
     if (sGpu2d) {
@@ -677,6 +679,7 @@ int render_on_gpu(void) { return sGpuDisplay; }
 int render_presenting(void) { return wdisp_presenting() || sPica; }
 
 void render_exit_report(void) {
+    if (sPica) pdisp_idle();  // (the GPU thread's last job done before the program ends)
     if (sCompare) {
         fprintf(stderr, "render-compare: %llu frames compared, %llu differ", (unsigned long long)sCompared,
                 (unsigned long long)sDiffering);

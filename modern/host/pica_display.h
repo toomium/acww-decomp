@@ -16,5 +16,11 @@ struct Gpu2dLayers *pdisp_layers(void);   // where the 2D renderer puts this fra
 void pdisp_frame(void *texture3d, const uint32_t *picture3d);
 // the last frame's screen (0 top, 1 bottom) read back: 256x192, 0x00RRGGBB
 const uint32_t *pdisp_screen(int screen);
+// The GPU thread (the 3DS's core 2): a job for it (done at once where there is none), and waiting until it has done
+// every job (before what a job reads changes, before citro3d is used elsewhere); the profile's marker its parts go
+// to (prof.h)
+void pdisp_submit(void (*job)(void *), void *arg);
+void pdisp_idle(void);
+extern volatile int *gPicaProf;
 
 #endif

@@ -33,6 +33,8 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
 #include <3ds.h>
 #include <citro3d.h>
 
+#include "../pica_display.h"
+
 extern const u8 gpu3d_pica_shbin[];  // (the vertex shader, gpu3d_pica.v.pica: picasso and bin2s)
 extern const u32 gpu3d_pica_shbin_size;
 
@@ -259,7 +261,28 @@ static s32 fog_density(const G3RenderState *r, s32 z) {
     return d >= 127 ? 128 : d;
 }
 
+static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth,
+                   u8 *flags);
+// for the compositing (color NULL): a job for the GPU thread (pica_display.c), which reads the list and the textures
+// until the game's thread waits for it; read back: at once
+static struct { const G3RenderState *r; const u8 *img, *pal; int texChanged; } sJob;
+static void render_job(void *arg) {
+    (void)arg;
+    render(sJob.r, sJob.img, sJob.pal, sJob.texChanged, 0, 0, 0);
+}
 void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags) {
+    pdisp_idle();
+    if (color) {
+        render(r, img, pal, texChanged, color, depth, flags);
+        return;
+    }
+    sJob.r = r, sJob.img = img, sJob.pal = pal, sJob.texChanged = texChanged;
+    pdisp_submit(render_job, 0);
+}
+
+static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth,
+                   u8 *flags) {
+    HOST_PROF_ON(gPicaProf, PROF_3D);
     sFrame++;
     // for the GPU's compositing (color NULL): into the next texture, nothing read back; the fog only "alpha only"
     // (the caller sends the colour fog here: gpu3d_raster.c), worked into the polygons' alpha at their vertices (with
@@ -279,7 +302,7 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
     u32 a8 = ca * 255 / 31;
 
     {
-        HOST_PROF(PROF_GPU);
+        HOST_PROF_ON(gPicaProf, PROF_GPU);
         C3D_FrameBegin(0);  // (not paced to the display: hw.c paces the frames; waits for the GPU's work before)
     }
     // (the colour premultiplied as the polygons')
@@ -368,7 +391,7 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
                  GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
     int fog = (r->dispcnt & 0x80) != 0;  // (the depth and the fog flags are only the fog pass's)
     {
-        HOST_PROF(PROF_GPU);
+        HOST_PROF_ON(gPicaProf, PROF_GPU);
         C3D_SyncDisplayTransfer(sTarget->frameBuf.colorBuf, GX_BUFFER_DIM(W, H), sColorOut, GX_BUFFER_DIM(W, H), flags3);
         if (fog) C3D_SyncDisplayTransfer(sTarget->frameBuf.depthBuf, GX_BUFFER_DIM(W, H), sDepthOut, GX_BUFFER_DIM(W, H), flags3);
     }
