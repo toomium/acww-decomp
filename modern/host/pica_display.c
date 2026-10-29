@@ -30,6 +30,7 @@ struct Gpu2dLayers *pdisp_layers(void) { return 0; }
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
 void pdisp_submit(int kind, void (*job)(void *), void *arg) { (void)kind, job(arg); }
+void pdisp_frame_begun(int kind) { (void)kind; }
 void pdisp_wait(int kind, int older) { (void)kind, (void)older; }
 void pdisp_idle(void) {}
 
@@ -150,6 +151,23 @@ void pdisp_submit(int kind, void (*job)(void *), void *arg) {
     sLastOf[kind][0] = ++sSubmitted;
     CondVar_WakeUp(&sChanged, ARBITRATION_SIGNAL_ALL);
     LightLock_Unlock(&sLock);
+}
+
+// ACWW_FPS: the GPU's drawing time (citro3d's, from a frame's commands to their end) of the 3D pictures and of the
+// compositing, every 300 frames composited; C3D_GetDrawingTime is the frame's before C3D_FrameBegin's
+void pdisp_frame_begun(int kind) {
+    static int on = -1, last = -1;
+    static float ms[2];
+    static u32 composited;
+    if (on < 0) on = getenv("ACWW_FPS") != 0;
+    if (!on) return;
+    if (last >= 0) ms[last] += C3D_GetDrawingTime();
+    last = kind;
+    if (kind == PDISP_COMP && ++composited % 300 == 0) {
+        fprintf(stderr, "pica: the GPU's drawing, ms a composited frame: 3D %.1f, compositing %.1f\n", ms[0] / 300,
+                ms[1] / 300);
+        ms[0] = ms[1] = 0;
+    }
 }
 
 static int tex(C3D_Tex *t, GPU_TEXCOLOR fmt) {
@@ -641,6 +659,7 @@ static void frame_job(void *arg) {
         HOST_PROF_ON(gPicaProf, PROF_GPU);
         C3D_FrameBegin(0);  // (waits for the GPU's work before)
     }
+    pdisp_frame_begun(PDISP_COMP);
     for (int e = 0; e < 2; e++) {
         for (int n = 0; n < 4; n++)
             if ((used[e] & 0x100u << n) && (cpuBg[e] >> n & 1))

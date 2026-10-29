@@ -311,6 +311,7 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
         HOST_PROF_ON(gPicaProf, PROF_GPU);
         C3D_FrameBegin(0);  // (not paced to the display: hw.c paces the frames; waits for the GPU's work before)
     }
+    if (direct) pdisp_frame_begun(PDISP_3D);
     // (the colour premultiplied as the polygons')
     C3D_RenderTargetClear(target, C3D_CLEAR_ALL,
                           (cr * 255 / 63 * a8 / 255) << 24 | (cg * 255 / 63 * a8 / 255) << 16 |

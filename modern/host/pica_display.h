@@ -21,6 +21,8 @@ const uint32_t *pdisp_screen(int screen);
 // or every job (before citro3d is used elsewhere); the profile's marker its parts go to (prof.h)
 enum { PDISP_3D, PDISP_COMP };
 void pdisp_submit(int kind, void (*job)(void *), void *arg);
+// after C3D_FrameBegin in a job of this kind: the GPU's time for the frame before is counted (ACWW_FPS)
+void pdisp_frame_begun(int kind);
 void pdisp_wait(int kind, int older);
 void pdisp_idle(void);
 extern volatile int *gPicaProf;
