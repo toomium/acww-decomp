@@ -546,14 +546,15 @@ static int clip_plane(G3Vertex *dst, const G3Vertex *src, int n, int comp, int s
     }
     return m;
 }
-// returns the number of vertices left in *out (0: nothing visible); *clipped if any plane cut the polygon
-static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *clipped) {
-    G3Vertex *a = sClipBuf[0], *b = sClipBuf[1];
-    memcpy(a, in, n * sizeof *a);
+// returns the number of vertices left in *out (0: nothing visible; *out NULL: the polygon as it came, no plane cut
+// it); *clipped if any plane cut it or it crosses the far plane. (The vertices are copied only when a plane cuts.)
+static int clip_polygon(G3Vertex *const *in, int n, G3Vertex **out, int farClip, int *clipped) {
+    G3Vertex *a = 0, *b = sClipBuf[1];
     *clipped = 0;
+    *out = 0;
     // the far plane: polygons crossing it are hidden unless attr bit 12
     for (int i = 0; i < n; i++)
-        if (a[i].pos[2] > a[i].pos[3]) {
+        if (in[i]->pos[2] > in[i]->pos[3]) {
             *clipped = 1;
             if (!farClip) { g3_feature(F_FARCLIP_HIDE); sFarHidden = 1; return 0; }
         }
@@ -572,9 +573,13 @@ static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *c
     for (int p = 0; p < 6; p++) {
         int comp = kPlanes[p][0], sign = kPlanes[p][1];
         int all = 1;
-        for (int i = 0; i < n; i++) if (!inside(&a[i], comp, sign)) { all = 0; break; }
+        for (int i = 0; i < n; i++) if (!inside(a ? &a[i] : in[i], comp, sign)) { all = 0; break; }
         if (all) continue;
         *clipped = 1;
+        if (!a) {
+            a = sClipBuf[0];
+            for (int i = 0; i < n; i++) a[i] = *in[i];
+        }
         n = clip_plane(b, a, n, comp, sign);
         G3Vertex *t = a; a = b; b = t;
         if (n == 0) return 0;
@@ -584,12 +589,12 @@ static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *c
 }
 
 // (diagnostics: ACWW_GPU3D_DEBUGTEX=<texparam hex>: every polygon with that texture, its outcome and vertices)
-static void debug_tex_poly(const char *what, const G3Vertex *v, int nv, int n) {
+static void debug_tex_poly(const char *what, G3Vertex *const *v, int nv, int n) {
     static long want = -2;
     if (want == -2) want = getenv("ACWW_GPU3D_DEBUGTEX") ? (long)strtoul(getenv("ACWW_GPU3D_DEBUGTEX"), 0, 16) : -1;
     if (want < 0 || (u32)want != sTexParam) return;
     fprintf(stderr, "debugtex frame %llu %s type %d n %d -> %d:", (unsigned long long)sFrame, what, sPolyType, nv, n);
-    for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i].pos[0], v[i].pos[1], v[i].pos[2], v[i].pos[3]);
+    for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i]->pos[0], v[i]->pos[1], v[i]->pos[2], v[i]->pos[3]);
     fprintf(stderr, "\n");
 }
 
@@ -597,17 +602,17 @@ static void submit_polygon(void) {
     sPolyDone = 1;
     sPolySerial++;
     int nv = sPolyType & 1 ? 4 : 3;
-    G3Vertex v[4];
+    G3Vertex *v[4];
     // the vertex order of the polygon: strips reuse the previous vertices
-    if (sPolyType == 2 && (sStripPolys & 1)) { v[0] = sTemp[1]; v[1] = sTemp[0]; v[2] = sTemp[2]; }
-    else if (sPolyType == 3) { v[0] = sTemp[0]; v[1] = sTemp[1]; v[2] = sTemp[3]; v[3] = sTemp[2]; }
-    else memcpy(v, sTemp, nv * sizeof *v);
+    if (sPolyType == 2 && (sStripPolys & 1)) { v[0] = &sTemp[1]; v[1] = &sTemp[0]; v[2] = &sTemp[2]; }
+    else if (sPolyType == 3) { v[0] = &sTemp[0]; v[1] = &sTemp[1]; v[2] = &sTemp[3]; v[3] = &sTemp[2]; }
+    else for (int i = 0; i < nv; i++) v[i] = &sTemp[i];
 
     // facing: the sign of the determinant of (x, y, w) of the first three vertices (clip space)
-    s64 ax = v[1].pos[0] - v[0].pos[0], ay = v[1].pos[1] - v[0].pos[1], aw = v[1].pos[3] - v[0].pos[3];
-    s64 bx = v[2].pos[0] - v[0].pos[0], by = v[2].pos[1] - v[0].pos[1], bw = v[2].pos[3] - v[0].pos[3];
+    s64 ax = v[1]->pos[0] - v[0]->pos[0], ay = v[1]->pos[1] - v[0]->pos[1], aw = v[1]->pos[3] - v[0]->pos[3];
+    s64 bx = v[2]->pos[0] - v[0]->pos[0], by = v[2]->pos[1] - v[0]->pos[1], bw = v[2]->pos[3] - v[0]->pos[3];
     s64 nx = ay * bw - aw * by, ny = aw * bx - ax * bw, nw = ax * by - ay * bx;
-    s64 dot = nx * v[0].pos[0] + ny * v[0].pos[1] + nw * v[0].pos[3];
+    s64 dot = nx * v[0]->pos[0] + ny * v[0]->pos[1] + nw * v[0]->pos[3];
     int facing = dot >= 0;  // front: the vertices clockwise on the screen
     u32 attr = sCurPolyAttr;
     int culled = facing ? !(attr & 0x80) : !(attr & 0x40);
@@ -629,7 +634,7 @@ static void submit_polygon(void) {
     debug_tex_poly(n ? "kept" : "clipped away", v, nv, n);
     sPolyNOut = n;
     sPolyClipped = clipped;
-    { static int dbg = -1; if (dbg < 0) dbg = getenv("ACWW_GPU3D_DEBUGPOLY") ? atoi(getenv("ACWW_GPU3D_DEBUGPOLY")) : 0; if (dbg > 0) { dbg--; fprintf(stderr, "poly attr %08x n %d -> %d clipped %d:", attr, nv, n, clipped); for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i].pos[0], v[i].pos[1], v[i].pos[2], v[i].pos[3]); fprintf(stderr, "\n"); } }
+    { static int dbg = -1; if (dbg < 0) dbg = getenv("ACWW_GPU3D_DEBUGPOLY") ? atoi(getenv("ACWW_GPU3D_DEBUGPOLY")) : 0; if (dbg > 0) { dbg--; fprintf(stderr, "poly attr %08x n %d -> %d clipped %d:", attr, nv, n, clipped); for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i]->pos[0], v[i]->pos[1], v[i]->pos[2], v[i]->pos[3]); fprintf(stderr, "\n"); } }
     if (clipped) g3_feature(F_CLIP);
     // a strip's polygon hidden by the far plane still leaves a polygon of the two vertices it shares with the
     // previous one (fitted to melonDS)
@@ -745,7 +750,8 @@ static void submit_polygon(void) {
         }
     }
     poly->norig = gG3Diagnostics ? nv : 0;  // (the vertices before clipping: for the comparisons' reports only)
-    if (gG3Diagnostics) memcpy(poly->orig, v, sizeof(G3Vertex) * nv);
+    if (gG3Diagnostics)
+        for (int i = 0; i < nv; i++) poly->orig[i] = *v[i];
     poly->vtop = vtop;
     poly->vbottom = vbot;
     poly->ytop = ytop;
@@ -855,8 +861,8 @@ static void box_test(const u32 *p) {
     static const u8 kFaces[6][4] = {{0, 1, 3, 2}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 3, 7, 5}};
     int in = 0;
     for (int f = 0; f < 6 && !in; f++) {
-        G3Vertex face[4], *out;
-        for (int k = 0; k < 4; k++) face[k] = c[kFaces[f][k]];
+        G3Vertex *face[4], *out;
+        for (int k = 0; k < 4; k++) face[k] = &c[kFaces[f][k]];
         int clipped;
         if (clip_polygon(face, 4, &out, 1, &clipped) > 0) in = 1;
     }
