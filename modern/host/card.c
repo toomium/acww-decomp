@@ -16,15 +16,35 @@ static u8 sHeader[0x200];
 static const char *sRomPath;  // (host_rom_path: pxi7.c's default save file)
 static u32 sAddr, sLeft, sIsData;
 
-// The image read from the file as the game asks for it, through a cache of 32 KB blocks (1 MB, the least recently
-// used one replaced): ACWW's is 32 MB, too much to hold on the 3DS beside the program (docs/3ds.md D4), and every
-// read of the 3DS's SD card is slow; the game reads its files in runs of 512-byte pages, often from a few at a time.
-enum { BLOCK = 0x8000, BLOCKS = 32 };
+// The image read from the file as the game asks for it, every read of the 3DS's SD card being slow. When the image
+// fits in memory beside what the program needs later (ROM_SPARE), it is held whole: each 64 KB piece read once, at
+// its first access (larger pieces would read much the game never asks for). Else (the Old 3DS: ACWW's image is
+// 32 MB, docs/3ds.md D4) through a cache of 32 KB blocks (1 MB, the least recently used one replaced); the game reads
+// its files in runs of 512-byte pages, often from a few at a time.
+enum { BLOCK = 0x8000, BLOCKS = 32, PIECE = 0x10000, ROM_SPARE = 12 << 20 };
 static u8 sBlock[BLOCKS][BLOCK];
 static u32 sBlockAddr[BLOCKS], sBlockUsed[BLOCKS], sUse;
 static int sLast;
+static u8 *sImage, *sPieceRead;  // the whole image; per piece: read
+static void read_at(u32 addr, u8 *dst, u32 n) {
+    memset(dst, 0xff, n);
+    if (fseek(sRom, (long)addr, SEEK_SET) != 0 || (fread(dst, 1, n, sRom) == 0 && ferror(sRom)))
+        host_fatal("the ROM file can't be read");
+}
+static void image_load(u32 a, u32 n) {  // (the pieces under [a, a + n))
+    for (u32 p = a / PIECE; p <= (a + n - 1) / PIECE; p++)
+        if (!sPieceRead[p]) {
+            u32 at = p * PIECE;
+            read_at(at, sImage + at, sRomSize - at < PIECE ? sRomSize - at : PIECE);
+            sPieceRead[p] = 1;
+        }
+}
 static u8 rom_byte(u32 a) {
     if (a >= sRomSize) return 0xff;
+    if (sImage) {
+        if (!sPieceRead[a / PIECE]) image_load(a, 1);
+        return sImage[a];
+    }
     u32 addr = a & ~(u32)(BLOCK - 1);
     if (sBlockAddr[sLast] != addr) {
         int b = 0;
@@ -33,9 +53,7 @@ static u8 rom_byte(u32 a) {
             if (sBlockUsed[i] < sBlockUsed[b]) b = i;
         }
         sBlockAddr[b] = addr;
-        memset(sBlock[b], 0xff, BLOCK);
-        if (fseek(sRom, (long)addr, SEEK_SET) != 0 || (fread(sBlock[b], 1, BLOCK, sRom) == 0 && ferror(sRom)))
-            host_fatal("the ROM file can't be read");
+        read_at(addr, sBlock[b], BLOCK);
     found:
         sLast = b;
     }
@@ -52,6 +70,14 @@ void card_init(const char *path) {
     if (n < (long)sizeof sHeader) host_fatal("the ROM file is too small");
     sRomSize = (u32)n;
     for (int i = 0; i < BLOCKS; i++) sBlockAddr[i] = ~0u;  // (none held)
+    void *spare = malloc(sRomSize + (size_t)ROM_SPARE);  // (the image only if this much fits)
+    if (spare) {
+        free(spare);
+        sImage = malloc(sRomSize);
+        sPieceRead = calloc(sRomSize / PIECE + 1, 1);
+        if (!sImage || !sPieceRead) free(sImage), free(sPieceRead), sImage = 0, sPieceRead = 0;
+    }
+    fprintf(stderr, "card: the ROM image %s\n", sImage ? "held in memory" : "through a 1 MB cache");
     for (u32 i = 0; i < sizeof sHeader; i++) sHeader[i] = rom_byte(i);
 }
 
@@ -75,6 +101,11 @@ void card_control_written(u32 ctrl) {
 // CARDi_ReadCard's fast path (HOST): a 512-byte page straight from the image
 void host_card_read(u32 addr, void *dst, u32 n) {
     HOST_PROF(PROF_ROM);
+    if (sImage && n && addr < sRomSize && n <= sRomSize - addr) {
+        image_load(addr, n);
+        memcpy(dst, sImage + addr, n);
+        return;
+    }
     for (u32 i = 0; i < n; i++) ((u8 *)dst)[i] = rom_byte(addr + i);
 }
 
