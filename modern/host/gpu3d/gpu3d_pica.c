@@ -66,6 +66,7 @@ typedef struct {
     u32 ver;       // the newest VRAM piece version under it when it was decoded
     u32 used;      // the frame it was last used in
     u32 checked;   // sVer when its version was last compared (unchanged since: still valid)
+    u32 palLo, palLen;  // 4x4 (format 5): the palette bytes its blocks use (when decoded)
     int live;
     C3D_Tex tex;
 } TexEntry;
@@ -89,6 +90,20 @@ static u32 newest(const u32 *ver, u32 size, u32 start, u32 len) {
         if (ver[p] > v) v = ver[p];
     return v;
 }
+static u32 slot1_4x4(u32 base) { return 0x20000 + ((base & 0x1ffff) >> 1) + ((base >> 17) == 2 ? 0x10000 : 0); }
+// a 4x4 texture's palette bytes: from its palette base, the lowest to the highest block's offset (4 bytes a unit;
+// a block uses up to 4 colours: 8 bytes)
+static void palette_4x4(u32 tp, u32 tpal, u32 *lo, u32 *len) {
+    int w = 8 << (tp >> 20 & 7), h = 8 << (tp >> 23 & 7);
+    u32 slot1 = slot1_4x4((tp & 0xffff) << 3 & (IMG_SIZE - 1)), mn = 0x3fff, mx = 0;
+    for (int b = 0; b < w * h / 16; b++) {
+        u32 a = (slot1 + 2 * (u32)b) & (IMG_SIZE - 1), off = (sImgCopy[a] | sImgCopy[a + 1] << 8) & 0x3fff;
+        if (off < mn) mn = off;
+        if (off > mx) mx = off;
+    }
+    *lo = (((tpal & 0x1fff) << 4) + mn * 4) & (PAL_SIZE - 1);
+    *len = (mx - mn) * 4 + 8;
+}
 // the newest version of the VRAM a texture reads (GBATEK "DS 3D Texture Formats": the image, 4x4's second slot,
 // the palette)
 static u32 texture_version(u32 tp, u32 tpal) {
@@ -97,11 +112,9 @@ static u32 texture_version(u32 tp, u32 tpal) {
     static const u16 colours[8] = {0, 32, 4, 16, 256, 0, 8, 0};
     u32 base = (tp & 0xffff) << 3 & (IMG_SIZE - 1);
     u32 v = newest(sImgVer, IMG_SIZE, base, (u32)(w * h * bits[fmt] / 8));
-    if (fmt == 5) {  // (the 4x4 blocks' palette info in slot 1, and palettes anywhere)
-        u32 slot1 = 0x20000 + ((base & 0x1ffff) >> 1) + ((base >> 17) == 2 ? 0x10000 : 0);
-        u32 i = newest(sImgVer, IMG_SIZE, slot1, (u32)(w * h / 8));
-        u32 p = newest(sPalVer, PAL_SIZE, 0, PAL_SIZE);
-        return v > i ? (v > p ? v : p) : (i > p ? i : p);
+    if (fmt == 5) {  // (the 4x4 blocks' palette info in slot 1; the palette bytes they use: palette_4x4)
+        u32 i = newest(sImgVer, IMG_SIZE, slot1_4x4(base), (u32)(w * h / 8));
+        return v > i ? v : i;
     }
     if (colours[fmt]) {
         u32 pb = fmt == 2 ? (tpal & 0x1fff) << 3 : (tpal & 0x1fff) << 4;
@@ -130,11 +143,16 @@ static C3D_Tex *texture(u32 tp, u32 tpal) {
         return &last->tex;
     }
     u32 ver = texture_version(tp, tpal);
+    int is4x4 = (tp >> 26 & 7) == 5;
     TexEntry *e = 0, *lru = 0;
     for (int i = 0; i < NTEX; i++) {
         TexEntry *t = &sTex[i];
         if (t->live && t->key == key && t->pal == pal) { e = t; break; }
         if (!lru || !t->live || (lru->live && t->used < lru->used)) lru = t;
+    }
+    if (e && is4x4) {  // (its blocks unchanged since it was decoded: the palette bytes it used then)
+        u32 p = newest(sPalVer, PAL_SIZE, e->palLo, e->palLen);
+        if (p > ver) ver = p;
     }
     if (e && e->ver >= ver) {
         e->used = sFrame, e->checked = sVer;
@@ -156,6 +174,11 @@ static C3D_Tex *texture(u32 tp, u32 tpal) {
     tile(rgba, e->tex.data, w, h);
     free(rgba);
     C3D_TexFlush(&e->tex);
+    if (is4x4) {
+        palette_4x4(tp, tpal, &e->palLo, &e->palLen);
+        u32 p = newest(sPalVer, PAL_SIZE, e->palLo, e->palLen);
+        if (p > ver) ver = p;
+    }
     e->ver = ver, e->used = sFrame, e->checked = sVer;
     last = e;
     return &e->tex;
