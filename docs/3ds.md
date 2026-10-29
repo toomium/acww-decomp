@@ -675,3 +675,10 @@ the exheader can enable core 2 on the New 3DS (1.3).
   pictures' hashes (`ACWW_PICA_HASH`, attract demo to frame 1500) are the build before's, with and without
   `ACWW_WIDE`. Not seen yet: the town by day, on hardware. Seen in the bus with and without this change: a grey
   slab in the 3D picture's lower left on some frames (Azahar's wrong window, or the wide 3D's own margins: open).
+- 2026-10-29: the wide view's 2D margins on hardware (the user: "it works", but more GPU load). The GPU's drawing,
+  ms a composited frame, where the 3D is drawn: 17.0-22.7 (mostly 20-22; the log before: 13-15), the town 50-53
+  frames a second. The margin pass drew each layer over the whole screen, the middle too (the DS's picture goes over
+  it): now an inverted scissor leaves the middle out (`margins2d`, half the pixels): 15.7-20.9 (mostly 16-18),
+  50-58 frames a second. The runs went different ways, so the numbers are rough. What is left of the cost (not
+  measured apart): BG3 drawn three times over the margins (the blending: over the backdrop, as it is, the stencil)
+  from a texture in linear memory. The watchdog report at the end of both runs: the home menu, as before.
