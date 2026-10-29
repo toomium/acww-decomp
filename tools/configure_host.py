@@ -192,6 +192,9 @@ GAME_FLAGS = " ".join([
     # the game's C library names renamed to ds_* (its own libc, apart from the host's)
     "-include", "include/host_libc_rename.h",
 ])
+if N3DS:
+    # the game optimised further on the 3DS's slow CPU, without frame pointers (no backtraces there: plat_3ds.c)
+    GAME_FLAGS = GAME_FLAGS.replace(" -O1 ", " -O2 ").replace(" -fno-omit-frame-pointer ", " -fomit-frame-pointer ")
 if WIN:
     # GCC's bitfield layout, not Microsoft's: the save data's layout (its static_asserts) needs it
     GAME_FLAGS += " -mno-ms-bitfields"
