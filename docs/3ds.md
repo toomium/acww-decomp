@@ -548,3 +548,10 @@ the exheader can enable core 2 on the New 3DS (1.3).
   the GPU about 4.5 ms a frame. Tried and reverted: drawing the layers straight into their textures in the GPU's
   tile order instead of display transfers made it slower (48 and 56-64): the GPU thread then has to wait for the
   GPU before drawing the layers instead of drawing them while the GPU works, and the tiled writes cost the CPU more.
+- 2026-10-29: where core 2's waits come from: the layers' uploads cost nothing (the profile's new `uploads` part),
+  the GPU itself takes 11-15 ms to composite a frame and 2-4 ms to draw a 3D picture (C3D_GetDrawingTime: the
+  `pica: the GPU's drawing` lines). The compositing reads its textures many times over; they were in linear (main)
+  memory. With the layers' textures in VRAM (commit 770d88be; 989 KB of VRAM left): compositing 9-10 ms, and in the
+  benchmark the name entry about 60 frames a second (was 56), the intro 69-80 (63-71), the town 69-81 (62-72). The
+  benchmark's start (frames 360-2640, 47-52) is bound by core 0: the geometry engine about 8.5 ms a frame there.
+  Next: the geometry engine; the BG textures (also in linear memory) to VRAM; the OBJs on the GPU.
