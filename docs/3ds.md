@@ -597,3 +597,10 @@ the exheader can enable core 2 on the New 3DS (1.3).
   sound (6.5 million frames) byte for byte the PC's, the 6001 pictures exact. Check the sound too from now on
   (`ACWW_WAV=sdmc:/3ds/acww/s.wav`, compared with the PC's from 44 bytes on). Elsewhere the runtime may also take
   an address below 0x02000000 or in DS ranges for something else: the 3DS's program reaches about 0x0250_0000.
+- 2026-10-29: on hardware with the sound fixed (the user: right now, a little scratching on the title screen):
+  paced, about 60 frames a second everywhere. What's left in the log: (1) with `ACWW_FPS` the frame after each
+  report takes 45-70 ms (the report's six lines, about 10 ms a write to the SD card, under `game`): only in the
+  measuring runs, but it can run the sound's queue dry where the title has 2-3 ms to spare. (2) The loads: frames
+  of 0.3-1.5 s (ROM 200-860 ms, registers 120-430 ms) - the DSP's queue runs dry each time (the DS's ARM7 keeps
+  playing through its loads). (3) The save: frames of 120-170 ms in `ARM7` for about 4 s (the save memory's
+  writes to the SD card).
