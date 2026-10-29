@@ -604,3 +604,13 @@ the exheader can enable core 2 on the New 3DS (1.3).
   of 0.3-1.5 s (ROM 200-860 ms, registers 120-430 ms) - the DSP's queue runs dry each time (the DS's ARM7 keeps
   playing through its loads). (3) The save: frames of 120-170 ms in `ARM7` for about 4 s (the save memory's
   writes to the SD card).
+- 2026-10-29: the user's three points. (1) The scratching with deep notes, in time with the music: ndsp's default
+  clipping is soft (it squeezes loud peaks); the mixed sound comes final, so normal now (commit 264647a9; the PC's
+  SDL plays the samples as they are). Not heard here: Azahar has no DSP firmware. (2) The ROM image is held in
+  memory when it fits with 12 MB to spare (card.c: each 64 KB piece read at its first access; the Old 3DS keeps the
+  1 MB cache): on the New 3DS it does - at the save script's frame 12000 the heap's arena is 37.5 MB of 55 MB
+  with the image. Azahar's first big load (frame 183): ROM 1046 -> 558 ms; `registers` stays at about 500 ms there
+  (not looked into). (3) The save memory goes to the file once the game has written nothing for 30 frames, and
+  before the program ends, the home menu and sleep (pxi7.c `pxi7_save_flush`): one write instead of hundreds of
+  page writes, each flushed. The PC's save script byte for byte (its save file too), Azahar's 6001 pictures and the
+  sound exact.
