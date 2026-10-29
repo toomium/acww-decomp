@@ -461,3 +461,10 @@ the exheader can enable core 2 on the New 3DS (1.3).
   compositing 3.6, DMA 2.9, game 2.2, sound 2.2, frontend and pacing 0. The `render:` line's 3D leaves out the 3D
   picture drawn in the skipped frames (frameskip 1 draws it in the frame before the screens'): the profile's 3D is
   about twice that line's. Next: the user's run on hardware, then the order of the speed-ups.
+- 2026-10-29: the profile on hardware (a New 3DS, the build of commit 2eb3892d, `ACWW_FPS=1`): the sampler got
+  **core 2** (`APT_SetAppCpuTimeLimit(30)` returned 0), so a .3dsx has a second core there. About 30 frames a
+  second (34 ms); milliseconds a frame from frame 360 on: geometry 7.9-8.7, 3D 6.0-7.8, registers 3.7-6.2, 2D
+  3.0-3.9, game 3.5-4.1, compositing 3.1-3.7, sound 1.4-2.0, DMA 1.1-1.4, frontend 0.1-0.2. Frames 120-240 (the
+  start, ROM reads from the SD card through the card registers) registers 29.7. The 3D part includes waits for the
+  GPU (`C3D_FrameBegin(0)` waits for the work before it) and the texture decoding: not yet split. The watchdog
+  report at the end again (the home menu, T2.7).
