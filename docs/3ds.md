@@ -561,3 +561,8 @@ the exheader can enable core 2 on the New 3DS (1.3).
   about half of it is the command path, a word at a time; the runtime at -O3 without frame pointers on the 3DS
   (Azahar: the geometry engine 13.9 -> 11.6 ms, the game's core 24.6 -> 23.4), a strip's shared vertices turned
   instead of copied (vertices 4.5 -> 3.9). All exact.
+- 2026-10-29: the benchmark on hardware with the runtime at -O3 and the strips turned (commit da8532aa): the start
+  (frames 360-2640) 47-54 frames a second (was 47-52), the geometry engine 7.5 ms a frame there (4.1 + vertices 2.3
+  + lighting 1.2; was about 8.5); the name entry about 60 (core 2: its 2D 8.4 ms, the GPU 3.1), the intro and the
+  town 69-81 as before. -O3 kept. Only the start is below 60 now; core 0 there: the geometry engine 7.5, game 4.2,
+  registers 2.0, the 2D record 1.7, sound 1.2, DMA 1.0 (about 19 ms).
