@@ -518,3 +518,8 @@ the exheader can enable core 2 on the New 3DS (1.3).
   between can make an interrupt due (Azahar registers 5.9-6.6 -> 5.1-5.6 ms); the geometry engine copies a
   polygon's vertices only when a plane cuts it (Azahar vertices 5.7-6.0 -> 4.7-5.3 ms). Without drawing on the PC
   20000 frames take 12.5-12.8 s (was 13.6-13.9 this morning).
+- 2026-10-29: on hardware with the 2D layers on core 2 (commit 20436c6e): about 43-45 frames a second, 45-49 in
+  quiet stretches; the game's core still had 2D 2.3 ms (the record: the sky's H-blank writes a palette colour every
+  line, and a new palette version was kept and 4 KB compared a line) and waited 0.9 ms for the GPU thread (its
+  compositing job, now with the 2D layers, was sometimes not done after short frames). Then: only the changed words
+  kept; two records in turn, the game's thread waits only for the compositing before the last. Exact in Azahar.
