@@ -588,3 +588,12 @@ the exheader can enable core 2 on the New 3DS (1.3).
   ms of the GPU thread in Azahar; now each 4x4 texture keeps the palette bytes its blocks use. Azahar's title, paced:
   47-50 -> 50-54 frames a second, the slowest frames 85-110 -> 50-60 ms (the 3D frames' geometry). Exact (6001
   pictures). The `fps:` line is followed by the slowest frame's parts (milliseconds per part, both threads).
+- 2026-10-29: the odd sound (the user: still with the queue full) was the sound itself: the 3DS build's mixed sound
+  wasn't the PC's from 0.63 s on (`ACWW_WAV` in Azahar against the x86-64 and i386 builds' identical files; never
+  compared before, only pictures). Channel 4 started with a wave's format, timer and length wrong: a sound file's
+  32-bit slots hold file offsets below 0x02000000 and pointers above (include/host_ptr32.h), and on the 3DS the
+  program and its data are at 0x00100000 on, so the address of a wave loaded on its own was read as an offset. Such
+  pointers are handles now (commit ea87cbf6: `HostPtr32_Of`). The save script's 12000 frames in Azahar: the
+  sound (6.5 million frames) byte for byte the PC's, the 6001 pictures exact. Check the sound too from now on
+  (`ACWW_WAV=sdmc:/3ds/acww/s.wav`, compared with the PC's from 44 bytes on). Elsewhere the runtime may also take
+  an address below 0x02000000 or in DS ranges for something else: the 3DS's program reaches about 0x0250_0000.
