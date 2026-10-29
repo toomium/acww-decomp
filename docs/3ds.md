@@ -533,3 +533,12 @@ the exheader can enable core 2 on the New 3DS (1.3).
   time 1.4-2.2 ms (was 3-10), now and then pacing (the game ahead of 60). The game's core about 18.3 ms: the
   geometry engine 7.3 (3.7 + vertices 2.4 + lighting 1.2), game 4.1, registers 2.0, the 2D record 1.8, sound 1.1,
   DMA 0.9; core 2 idle about 7 of them.
+- 2026-10-29: on hardware with the game at -O2 (commit d3eab214): 45-51 frames a second, the game's code about the
+  same (3.8-4.2 ms), the geometry engine more (about 9 ms): another scene, so runs played by hand don't compare.
+  A benchmark on the hardware: the save script plays itself, unpaced, with a fixed clock and no save file, the
+  same game frame for frame each run; its `acww.cfg` (copy it to `sdmc:/3ds/acww/acww.cfg`, the usual one aside):
+
+      { printf 'ACWW_FPS=1\nACWW_FAST=1\nACWW_WATCHDOG=0\nACWW_RTC=2026-04-01 12:00:00\nACWW_SAVE=\nACWW_EXIT_FRAME=12000\n'
+        python3 tools/host_play_script.py save | sed "s/^export //; s/='/=/; s/'\$//"; } > build/host3ds_usa/acww-bench.cfg
+
+  (`ACWW_SAVE=` empty: a blank save each run, nothing written.) Runs in Azahar with a window (to frame 3000).
