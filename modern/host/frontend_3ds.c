@@ -40,11 +40,26 @@ static void open_audio(void) {
     }
 }
 
-// a played buffer is filled when a whole buffer's sound is waiting: the ring holds the rest meanwhile
+// a played buffer is filled when a whole buffer's sound is waiting: the ring holds the rest meanwhile. The level (the
+// DSP's queue and the ring) is held near AUDIO_TARGET by playing up to 0.5 % faster or slower; when the DSP's queue
+// ran dry, nothing is queued until three buffers are waiting (else every buffer arrives just in time: crackles).
+// (As frontend_sdl.c's audio_callback.)
+#define AUDIO_TARGET (2.5 * WAVE_FRAMES)
 static void feed_audio(AcwwShm *shm) {
     if (!sWaveData) return;
+    static int primed;
+    static unsigned dry, calls;  // (ACWW_FPS: how often the DSP's queue ran dry, every 120 frames)
     uint32_t r = shm->audio_read, w = __atomic_load_n(&shm->audio_write, __ATOMIC_ACQUIRE);
-    if (w - r > ACWW_AUDIO_FRAMES / 2) r = w - WAVE_FRAMES;  // far behind (a stall): skip ahead
+    if (w - r > ACWW_AUDIO_FRAMES / 2) r = w - 3 * WAVE_FRAMES;  // far behind (a stall): skip ahead
+    int queued = 0;
+    for (int i = 0; i < WAVE_BUFS; i++) queued += sWave[i].status == NDSP_WBUF_QUEUED || sWave[i].status == NDSP_WBUF_PLAYING;
+    if (!queued && primed) dry++;
+    if (!queued) primed = 0;
+    if (++calls % 120 == 0 && getenv("ACWW_FPS")) fprintf(stderr, "sound: the DSP's queue ran dry %u times\n", dry);
+    if (!primed && w - r < 3 * WAVE_FRAMES) goto done;
+    primed = 1;
+    double err = ((double)(w - r) + queued * WAVE_FRAMES - (queued ? ndspChnGetSamplePos(0) : 0) - AUDIO_TARGET) / AUDIO_TARGET;
+    ndspChnSetRate(0, ACWW_AUDIO_RATE * (1.0 + 0.005 * (err < -1 ? -1 : err > 1 ? 1 : err)));
     for (int i = 0; i < WAVE_BUFS && w - r >= WAVE_FRAMES; i++) {
         ndspWaveBuf *b = &sWave[i];
         if (b->status != NDSP_WBUF_DONE && b->status != NDSP_WBUF_FREE) continue;
@@ -56,6 +71,7 @@ static void feed_audio(AcwwShm *shm) {
         DSP_FlushDataCache(b->data_pcm16, WAVE_FRAMES * 4);
         ndspChnWaveBufAdd(0, b);
     }
+done:
     __atomic_store_n(&shm->audio_read, r, __ATOMIC_RELEASE);
 }
 
