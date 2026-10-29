@@ -41,7 +41,8 @@ static u32 sPolyAttr, sCurPolyAttr, sTexParam, sTexPal;
 static u32 sViewport[6];                // x1, y1 (from the top), x2, y2, width, height
 static int sPolyType;                   // BEGIN_VTXS: 0 triangles, 1 quads, 2 triangle strip, 3 quad strip
 static int sInBegin;
-static G3Vertex sTemp[4];               // the vertices of the polygon being set up
+static G3Vertex sTempBuf[4];            // the vertices of the polygon being set up, in the order of sTemp (a strip's
+static G3Vertex *sTemp[4] = {&sTempBuf[0], &sTempBuf[1], &sTempBuf[2], &sTempBuf[3]};  // next polygon: turned)
 static int sVtxCount, sVtxInPoly, sStripPolys;
 static G3Vertex *sStripRam[2];          // a strip's last two vertices in vertex RAM
 static int sStripValid;                 // ... if the next polygon can share them
@@ -604,9 +605,9 @@ static void submit_polygon(void) {
     int nv = sPolyType & 1 ? 4 : 3;
     G3Vertex *v[4];
     // the vertex order of the polygon: strips reuse the previous vertices
-    if (sPolyType == 2 && (sStripPolys & 1)) { v[0] = &sTemp[1]; v[1] = &sTemp[0]; v[2] = &sTemp[2]; }
-    else if (sPolyType == 3) { v[0] = &sTemp[0]; v[1] = &sTemp[1]; v[2] = &sTemp[3]; v[3] = &sTemp[2]; }
-    else for (int i = 0; i < nv; i++) v[i] = &sTemp[i];
+    if (sPolyType == 2 && (sStripPolys & 1)) { v[0] = sTemp[1]; v[1] = sTemp[0]; v[2] = sTemp[2]; }
+    else if (sPolyType == 3) { v[0] = sTemp[0]; v[1] = sTemp[1]; v[2] = sTemp[3]; v[3] = sTemp[2]; }
+    else for (int i = 0; i < nv; i++) v[i] = sTemp[i];
 
     // facing: the sign of the determinant of (x, y, w) of the first three vertices (clip space)
     s64 ax = v[1]->pos[0] - v[0]->pos[0], ay = v[1]->pos[1] - v[0]->pos[1], aw = v[1]->pos[3] - v[0]->pos[3];
@@ -675,7 +676,7 @@ static void submit_polygon(void) {
         G3Vertex *at[4];
         for (int k = 0; k < nv; k++) {
             if (k < shared) at[k] = sStripRam[k];
-            else { at[k] = &ram[sNumVerts++]; *at[k] = sTemp[k]; }
+            else { at[k] = &ram[sNumVerts++]; *at[k] = *sTemp[k]; }
         }
         for (int i = 0; i < n; i++) poly->v[i] = at[ord[i]];
         if (strip) {
@@ -784,7 +785,7 @@ static void submit_vertex(void) {
     if (!sInBegin) return;
     HOST_PROF(PROF_VERTEX);
     update_clip();
-    G3Vertex *v = &sTemp[sVtxInPoly];
+    G3Vertex *v = sTemp[sVtxInPoly];
     s64 x = sVtx[0], y = sVtx[1], z = sVtx[2];
     for (int i = 0; i < 4; i++)
         v->pos[i] = (s32)((x * sClip.m[i] + y * sClip.m[4 + i] + z * sClip.m[8 + i] + 0x1000 * (s64)sClip.m[12 + i]) >> 12);
@@ -814,8 +815,10 @@ static void submit_vertex(void) {
         if (sVtxInPoly == 3) {
             submit_polygon();
             sStripPolys++;
+            G3Vertex *t = sTemp[0];  // (the next polygon shares the last two: turned, not copied)
             sTemp[0] = sTemp[1];
             sTemp[1] = sTemp[2];
+            sTemp[2] = t;
             sVtxInPoly = 2;
         }
         break;
@@ -823,8 +826,11 @@ static void submit_vertex(void) {
         if (sVtxInPoly == 4) {
             submit_polygon();
             sStripPolys++;
+            G3Vertex *t0 = sTemp[0], *t1 = sTemp[1];
             sTemp[0] = sTemp[2];
             sTemp[1] = sTemp[3];
+            sTemp[2] = t0;
+            sTemp[3] = t1;
             sVtxInPoly = 2;
         }
         break;
