@@ -563,7 +563,7 @@ static void group(const Group *g) {
         colour_writes(1);
     }
     for (int p = 3; p >= 0; p--) {
-        for (int n = 4; n >= 0; n--) {  // (BG3 to BG0, then the OBJs of this priority in front of them)
+        for (int n = 0; n <= 4; n++) {  // (BG3 to BG0, then the OBJs of this priority in front of them)
             int l = n == 4 ? 4 : 3 - n;
             if (l < 4 && (!(dispcnt & 0x100u << l) || s->prio[l] != p)) continue;
             if (l == 4 && !(dispcnt & 0x1000)) continue;
