@@ -491,7 +491,7 @@ the exheader can enable core 2 on the New 3DS (1.3).
 - 2026-10-29: the GPU thread (commit c63dd6a7): the 3D pictures and the compositing are jobs on core 2
   (`pica_display.c` `pdisp_submit` / `pdisp_idle`, one at a time); the game's thread waits for it before it changes
   what a job reads (the 3D engine's list and textures, the 2D renderer's layers) and copies what the game changes
-  at any time (VRAM and the BG palettes: the maps and tile data of the BGs the GPU draws, about 9 KB a frame in the
+  at any time (VRAM and the BG palettes: the maps and tile data of the BGs the GPU draws, about 29 KB a frame in the
   attract demo). The 2D renderer (OBJs, the windows, the CPU's BGs) stays on core 0: it runs between the game's
   H-blank handlers. Checked in Azahar: the hashes of all 756 composited pictures of frames 0-1510 are the same with
   the thread, with it and 5 ms delays per job (`ACWW_PICA_DELAY`), and without it (`ACWW_PICA_THREAD=0`); the
