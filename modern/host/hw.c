@@ -125,11 +125,33 @@ static void prof_sampler(void *arg) {
     }
     thread_stopped();
 }
-static void prof_report(double frameMs) {
-    static const char *const kNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
+static const char *const kProfNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
                                                "sound", "frontend", "pacing", "GPU wait", "lighting",
                                                "vertices", "waiting for the GPU thread", "idle", "ROM",
                                                "ARM7", "uploads"};
+// the slowest frame of the 120: the parts the sampler saw in it (milliseconds), the game's thread and the GPU thread
+static u32 sProfAt[2][PROF_N], sProfSlowest[2][PROF_N];
+static void prof_frame(int slowest) {
+    for (int t = 0; t < 2; t++)
+        for (int i = 0; i < PROF_N; i++) {
+            u32 v = __atomic_load_n(&sProfSamples[t][i], __ATOMIC_RELAXED);
+            if (slowest) sProfSlowest[t][i] = v - sProfAt[t][i];
+            sProfAt[t][i] = v;
+        }
+}
+// (a line is put together first and written at once: the GPU thread's lines would come between the pieces)
+static void prof_slowest_report(void) {
+    char line[512];
+    int n = 0;
+    for (int t = 0; t < 2; t++) {
+        n += snprintf(line + n, sizeof line - n, t ? "; the GPU thread:" : "the slowest frame's parts (ms):");
+        for (int i = 0; i < PROF_N; i++)
+            if (sProfSlowest[t][i] >= 2) n += snprintf(line + n, sizeof line - n, " %s %u", kProfNames[i], sProfSlowest[t][i]);
+    }
+    fprintf(stderr, "%s\n", line);
+}
+static void prof_report(double frameMs) {
+    const char *const *kNames = kProfNames;
     static u32 seen[2][PROF_N];
     for (int t = 0; t < 2; t++) {
         u32 n[PROF_N], total = 0;
@@ -139,11 +161,12 @@ static void prof_report(double frameMs) {
             total += n[i];
         }
         if (!total || (t == 1 && n[PROF_IDLE] == total)) continue;  // (no GPU thread: always idle)
-        fprintf(stderr, "profile%s: %u samples, ms a frame:", t ? ", the GPU thread" : "", total);
+        char line[512];
+        int k = snprintf(line, sizeof line, "profile%s: %u samples, ms a frame:", t ? ", the GPU thread" : "", total);
         for (int i = 0; i < PROF_N; i++)
             if (t == 0 ? i != PROF_IDLE : (i == PROF_2D || i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_UPLOAD || i == PROF_IDLE))
-                fprintf(stderr, " %s %.1f", kNames[i], frameMs * n[i] / total);
-        fprintf(stderr, "\n");
+                k += snprintf(line + k, sizeof line - k, " %s %.1f", kNames[i], frameMs * n[i] / total);
+        fprintf(stderr, "%s\n", line);
     }
 }
 
@@ -419,19 +442,22 @@ static void run_events_body(void) {
             { static unsigned long long lastIo; fprintf(stderr, " io %llu", (unsigned long long)sIoCount - lastIo); lastIo = sIoCount; }
             fprintf(stderr, " vramcnt %08x %08x ime %x ie %08x if %08x cpu %x\n", R32(0x04000240), R32(0x04000244), R32(0x04000208), R32(0x04000210), sIF, host_irq_state());
         }
-        static u64 prevFrame, slowest;  // (ACWW_FPS: the longest frame of the 120, real time)
+        static u64 prevFrame, slowest, slowestAt;  // (ACWW_FPS: the longest frame of the 120, real time, and which)
         if (getenv("ACWW_FPS")) {
             u64 t = host_plat_time_ns();
-            if (prevFrame && t - prevFrame > slowest) slowest = t - prevFrame;
+            int slow = prevFrame && t - prevFrame > slowest;
+            if (slow) slowest = t - prevFrame, slowestAt = host_frame();
             prevFrame = t;
+            prof_frame(slow);
         }
         if (getenv("ACWW_FPS") && host_frame() % 120 == 0) {  // frames per second of real time, over the last 120
             static u64 last;
             u64 now = host_plat_time_ns();
             if (last) {
-                fprintf(stderr, "fps: frame %llu %.1f, the slowest frame %.1f ms\n", (unsigned long long)host_frame(),
-                        120 / ((double)(now - last) * 1e-9), slowest * 1e-6);
+                fprintf(stderr, "fps: frame %llu %.1f, the slowest frame %.1f ms (frame %llu)\n", (unsigned long long)host_frame(),
+                        120 / ((double)(now - last) * 1e-9), slowest * 1e-6, (unsigned long long)slowestAt);
                 slowest = 0;
+                prof_slowest_report();
                 prof_report((double)(now - last) / 120e6);
             } else if (!thread_start(prof_sampler, 0, 1)) {
                 fprintf(stderr, "host: no thread for ACWW_FPS's profile\n");
