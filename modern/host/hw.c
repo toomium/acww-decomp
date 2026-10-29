@@ -888,6 +888,22 @@ void HostIo_Send32(uintptr_t addr, const u32 *src, u32 n) {
     HOST_PROF(PROF_REGS);
     void *caller = __builtin_return_address(0);
     for (u32 i = 0; i < n; i++) {
+        // after the first word, with the GX FIFO interrupt off and no time to move (the spin check far from its
+        // limit), nothing between the words can make an interrupt due: the rest at once, checked after the last
+        if (i == 1 && sTimingLegacy == 0 && sTimeless + n < 1000000 &&
+            !((R32(0x04000208) & 1) && (R32(0x04000210) & 1u << 21))) {
+            u32 m = n - 1;
+            sIoCount += m;
+            for (u32 k = 0; k < m && k < 16; k++) sRing[sRingPos++ & 15] = (struct IoLog){a, 1, (uintptr_t)caller};
+            sRingPos += m > 16 ? m - 16 : 0;
+            R32(a) = src[n - 1];
+            sPollAddr = ~0u;
+            sTimeless += m;
+            sGxWrites += m;
+            render_write32_n(a, src + 1, m);
+            io_access_done();
+            break;
+        }
         sIoCount++;
         sRing[sRingPos++ & 15] = (struct IoLog){a, 1, (uintptr_t)caller};
         R32(a) = src[i];

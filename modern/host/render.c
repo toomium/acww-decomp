@@ -275,6 +275,16 @@ void render_write32(u32 addr, u32 v) {
     if (sCompare > 1 && !sSelftest && addr >= 0x04000400 && addr <= 0x04000600) compare_state(addr, v);
 }
 
+void render_write32_n(u32 addr, const u32 *v, u32 n) {
+    // (as render_write32 for a 3D command port: not the 2D renderer's; melonDS and the comparisons word by word)
+    if (sMelon || sCompare > 1 || !sGpu3d || !is_3d(addr) || addr < 0x04000400 || addr >= 0x04000600) {
+        for (u32 i = 0; i < n; i++) render_write32(addr, v[i]);
+        return;
+    }
+    HOST_PROF(PROF_GEOM);
+    for (u32 i = 0; i < n; i++) gpu3d_write32(addr, v[i]);
+}
+
 u32 render_read32(u32 addr) {
     HOST_PROF(PROF_GEOM);
     if (!sOwn3d) {

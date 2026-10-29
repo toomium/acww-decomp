@@ -11,6 +11,8 @@ void render_init(void);
 // 0x04001000-0x0400106f, POWCNT1, VRAMCNT, the 3D registers and command ports
 void render_write8(u32 addr, u8 v);
 void render_write16(u32 addr, u16 v);
+// the same, words to one 3D command port (HostIo_Send32)
+void render_write32_n(u32 addr, const u32 *v, u32 n);
 void render_write32(u32 addr, u32 v);
 u32 render_read32(u32 addr);       // the 3D engine's status and results (0x04000320, 0x04000600-0x040006a3)
 void render_frame(void);           // at VBlank: the frame from the VRAM banks, palettes, OAM and registers
