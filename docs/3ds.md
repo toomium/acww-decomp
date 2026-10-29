@@ -454,3 +454,10 @@ the exheader can enable core 2 on the New 3DS (1.3).
   back). The frame's inputs must stay stable meanwhile: Gpu2dLayers double-buffered and the BG palette copied, the
   polygon list (its RAM bank is already double), the texture slots (rewritten at the next raster frame). Then the
   smaller exact items (remap, the DMA path through the register layer), and T2.7 (home menu, sleep).
+- 2026-10-29: `ACWW_FPS` has a sampled profile now (`profile:` lines, milliseconds a frame per part; commit
+  cc2a137e): the game's thread marks the part it is in, a sampler thread counts every millisecond (on the 3DS on
+  another core: `3ds: the profile's sampler on core N` in the log; Azahar's New 3DS gives core 2). In Azahar
+  (headless, the attract demo, 21.5 frames a second = 46.5 ms): geometry 14.7, registers 7.3-8.5, 2D 6.7, 3D 6.3,
+  compositing 3.6, DMA 2.9, game 2.2, sound 2.2, frontend and pacing 0. The `render:` line's 3D leaves out the 3D
+  picture drawn in the skipped frames (frameskip 1 draws it in the frame before the screens'): the profile's 3D is
+  about twice that line's. Next: the user's run on hardware, then the order of the speed-ups.
