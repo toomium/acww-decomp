@@ -129,7 +129,7 @@ static void prof_report(double frameMs) {
     static const char *const kNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
                                                "sound", "frontend", "pacing", "GPU wait", "lighting",
                                                "vertices", "waiting for the GPU thread", "idle", "ROM",
-                                               "ARM7"};
+                                               "ARM7", "uploads"};
     static u32 seen[2][PROF_N];
     for (int t = 0; t < 2; t++) {
         u32 n[PROF_N], total = 0;
@@ -141,7 +141,7 @@ static void prof_report(double frameMs) {
         if (!total || (t == 1 && n[PROF_IDLE] == total)) continue;  // (no GPU thread: always idle)
         fprintf(stderr, "profile%s: %u samples, ms a frame:", t ? ", the GPU thread" : "", total);
         for (int i = 0; i < PROF_N; i++)
-            if (t == 0 ? i != PROF_IDLE : (i == PROF_2D || i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_IDLE))
+            if (t == 0 ? i != PROF_IDLE : (i == PROF_2D || i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_UPLOAD || i == PROF_IDLE))
                 fprintf(stderr, " %s %.1f", kNames[i], frameMs * n[i] / total);
         fprintf(stderr, "\n");
     }

@@ -578,7 +578,7 @@ static void group(const Group *g) {
 
 static void upload(void *src, C3D_Tex *t, u32 bytes, GX_TRANSFER_FORMAT fmt) {
     GSPGPU_FlushDataCache(src, bytes);
-    HOST_PROF_ON(gPicaProf, PROF_GPU);
+    HOST_PROF_ON(gPicaProf, PROF_UPLOAD);
     C3D_SyncDisplayTransfer(src, GX_BUFFER_DIM(W, H), t->data, GX_BUFFER_DIM(W, H),
                             kLinearToTiled | GX_TRANSFER_IN_FORMAT(fmt) | GX_TRANSFER_OUT_FORMAT(fmt));
 }
