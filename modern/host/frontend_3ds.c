@@ -73,7 +73,8 @@ static void show(gfxScreen_t screen, const uint32_t *px) {
     }
 }
 
-// the home menu and sleep: the GPU thread's work done first (pica_display.c)
+// the home menu and sleep: the GPU thread's work done first (pica_display.c). (libctru calls the hooks in the
+// thread of aptMainLoop, the game's; this one is set after citro3d's, render_init, so it runs before it)
 static aptHookCookie sAptHook;
 static void apt_hook(APT_HookType hook, void *param) {
     (void)param;

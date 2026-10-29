@@ -22,7 +22,7 @@ void host_plat_init(void) {
     freopen(DIR "log.txt", "a", stderr);
     setvbuf(stderr, 0, _IONBF, 0);
     FILE *f = fopen(DIR "acww.cfg", "r");
-    char line[512];
+    static char line[16384];  // (input scripts: ACWW_KEYS is several KB)
     while (f && fgets(line, sizeof line, f)) {
         line[strcspn(line, "\r\n")] = 0;
         char *eq = strchr(line, '=');
