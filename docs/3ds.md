@@ -529,3 +529,7 @@ the exheader can enable core 2 on the New 3DS (1.3).
   frames 12.5 -> 10.4 s): the geometry engine about 47 % with its copies, VRAM's remapping about 10 % (inside
   register writes: every VRAMCNT change moved megabytes, several changes a frame while textures load). Now only the
   granules whose bank changes move; a new polygon is zeroed without its diagnostics copy. Exact.
+- 2026-10-29: on hardware with VRAM's remapping fixed (commit 90660839): about 52-55 frames a second, the register
+  time 1.4-2.2 ms (was 3-10), now and then pacing (the game ahead of 60). The game's core about 18.3 ms: the
+  geometry engine 7.3 (3.7 + vertices 2.4 + lighting 1.2), game 4.1, registers 2.0, the 2D record 1.8, sound 1.1,
+  DMA 0.9; core 2 idle about 7 of them.
