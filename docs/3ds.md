@@ -468,3 +468,11 @@ the exheader can enable core 2 on the New 3DS (1.3).
   start, ROM reads from the SD card through the card registers) registers 29.7. The 3D part includes waits for the
   GPU (`C3D_FrameBegin(0)` waits for the work before it) and the texture decoding: not yet split. The watchdog
   report at the end again (the home menu, T2.7).
+- 2026-10-29: the game swaps the 3D buffers every third frame (the save script on the PC: nearly every gap 3), so
+  its 3D runs at 20 frames a second and every polygon list is drawn sometime: the geometry engine has no frames
+  whose work could be skipped. What was double instead: frameskip 1 drew some lists twice. Now a list is drawn
+  once (`g3_render`: no new picture without a swap or a VRAMCNT change; byte for byte the same at frameskip 0 and
+  1). In Azahar the profile's 3D 6.3 -> 3.4 ms, 21.5 -> 22.7 frames a second. The profile shows the waits for the
+  GPU (`GPU wait`: frame begin, display transfers; 0 in Azahar) and the geometry engine's lighting and vertices
+  apart (Azahar: lighting 2.7, vertices 5.7, the rest of it - FIFO, matrices, timing - 6.2 ms). Azahar's
+  function-level samples aren't the hardware's (`lighting` is ~250 instructions without calls, ~900 a frame).
