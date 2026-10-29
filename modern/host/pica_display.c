@@ -243,7 +243,9 @@ typedef struct {
     int kind, w, h, color256;  // (kind 0: no texture yet)
     u32 frame;                 // the frame it was brought up to date in
     u32 charBase, mapBase;
-    C3D_Tex tex;
+    C3D_Tex tex;               // what the GPU reads: in VRAM where it fits, else in linear memory
+    C3D_Tex stage;             // (tex in VRAM: the copy the CPU decodes into, which the CPU can't write)
+    int staged;
     u16 map[64 * 64];          // the map entries the texture shows (affine: 8-bit ones)
     u8 chars[0x10000];         // the tile data it was decoded from
     u8 pal[0x200];             // and the BG palette
@@ -266,7 +268,7 @@ static inline u16 pal(const u8 *p, u32 i) { return (u16)(p[i * 2] | p[i * 2 + 1]
 
 // one 8x8 tile of the BG texture from map entry `entry`
 static void bg_tile(BgTex *t, int tx, int ty, u16 entry) {
-    u16 *dst = (u16 *)t->tex.data + (ty * (t->w / 8) + tx) * 64;
+    u16 *dst = (u16 *)(t->staged ? t->stage.data : t->tex.data) + (ty * (t->w / 8) + tx) * 64;
     if (t->kind == 2) {  // affine: 256 colours, no flips
         const u8 *c = t->chars + (entry & 0xff) * 64u;
         for (int y = 0; y < 8; y++)
@@ -336,8 +338,12 @@ static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
     int full = 0;
     if (t->kind != kind || t->w != w || t->h != h) {
         if (t->kind) C3D_TexDelete(&t->tex);
+        if (t->kind && t->staged) C3D_TexDelete(&t->stage);
         t->kind = 0;
-        if (!C3D_TexInit(&t->tex, (u16)w, (u16)h, GPU_RGBA5551)) return 0;
+        // (in VRAM where it fits, which the GPU reads faster)
+        t->staged = C3D_TexInitVRAM(&t->tex, (u16)w, (u16)h, GPU_RGBA5551);
+        if (t->staged && !C3D_TexInit(&t->stage, (u16)w, (u16)h, GPU_RGBA5551)) C3D_TexDelete(&t->tex), t->staged = 0;
+        if (!t->staged && !C3D_TexInit(&t->tex, (u16)w, (u16)h, GPU_RGBA5551)) return 0;
         C3D_TexSetFilter(&t->tex, GPU_NEAREST, GPU_NEAREST);
         t->tex.border = 0;  // (an affine BG without wrap: transparent outside)
         t->kind = kind, t->w = w, t->h = h;
@@ -377,7 +383,10 @@ static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
             }
             t->map[ty * tw + tx] = entry;
         }
-    if (drawn) C3D_TexFlush(&t->tex);
+    if (drawn && t->staged) {  // (the GPU copies it to VRAM: C3D_SyncTextureCopy)
+        C3D_TexFlush(&t->stage);
+        C3D_TexLoadImage(&t->tex, t->stage.data, GPU_TEXFACE_2D, 0);
+    } else if (drawn) C3D_TexFlush(&t->tex);
     return t;
 }
 
@@ -454,6 +463,9 @@ static int sMargin;
 static float sX0 = 0, sX1 = W, sY = 0;
 static float piece_y0(const Group *g, int i) { return g->y0[i] == 0 ? 0.0f - sY : (float)g->y0[i]; }
 static float piece_y1(const Group *g, int i) { return g->y1[i] == H ? H + sY : (float)g->y1[i]; }
+// (group: the passes a margin layer can leave out - everything under it is a 2nd target the effects are allowed
+// on, so none of it shows "as it is"; nothing after it reads the stencil)
+static int sAllSecond, sNoMark;
 static int affine_wraps(const Gpu2dLineState *s, int l) {
     return l >= 2 && l < 4 && (s->gpuBg >> l & 1) && s->bgKind[l] == 2 && (s->bgcnt[l] & 0x2000);
 }
@@ -542,11 +554,14 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
         C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_CONSTANT_COLOR, GPU_CONSTANT_ALPHA, GPU_ONE, GPU_ZERO);
     }
     layer_pass(g, l, is3d, b);
-    stencil(GPU_EQUAL, rref, rmask | 0x20, 0);
-    // (the GPU's premultiplied 3D picture over what is below elsewhere too: its colour alone is darkened where its
-    // alpha isn't full)
-    if (!(blend3d && s3dPremultiplied)) opaque();
-    layer_pass(g, l, is3d, b);
+    if (!sAllSecond) {
+        stencil(GPU_EQUAL, rref, rmask | 0x20, 0);
+        // (the GPU's premultiplied 3D picture over what is below elsewhere too: its colour alone is darkened where its
+        // alpha isn't full)
+        if (!(blend3d && s3dPremultiplied)) opaque();
+        layer_pass(g, l, is3d, b);
+    }
+    if (sNoMark) return;
     colour_writes(0);
     stencil(GPU_EQUAL, rref | bits, rmask, 0x23);
     layer_pass(g, l, is3d, b);
@@ -594,13 +609,20 @@ static void group(const Group *g) {
         }
         colour_writes(1);
     }
+    int margin = 0, margins = 0;  // (the margins' layers drawn, of how many)
+    for (int l = 0; sMargin && l < 4; l++)
+        margins += (dispcnt & 0x100u << l) && affine_wraps(s, l) && (!windows || shows[0] >> l & 1);
     for (int p = 3; p >= 0; p--) {
         for (int n = 0; n <= 4; n++) {  // (BG3 to BG0, then the OBJs of this priority in front of them)
             int l = n == 4 ? 4 : 3 - n;
             if (l < 4 && (!(dispcnt & 0x100u << l) || s->prio[l] != p)) continue;
             if (l == 4 && !(dispcnt & 0x1000)) continue;
-            if (sMargin) {
-                if (affine_wraps(s, l) && (!windows || shows[0] >> l & 1)) layer(g, l, p, is3d, 0, 0);
+            if (sMargin) {  // (under the first: the backdrop alone; after the last: only the master brightness)
+                if (!affine_wraps(s, l) || (windows && !(shows[0] >> l & 1))) continue;
+                sAllSecond = margin == 0 && (bld >> 13 & 1) && !outside;
+                sNoMark = ++margin == margins && effect != 2 && effect != 3;
+                layer(g, l, p, is3d, 0, 0);
+                sAllSecond = sNoMark = 0;
                 continue;
             }
             // (the layers the CPU drew have the windows applied; the GPU's BGs and the 3D layer are drawn per region)
