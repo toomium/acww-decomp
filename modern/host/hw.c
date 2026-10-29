@@ -73,8 +73,11 @@ static u32 sIF;
 void host_irq_raise(u32 m) { sIF |= m; }
 void host_irq_ack(u32 m) { sIF &= ~m; }
 u32 host_irq_pending(void) {
-    u32 lines = sIF | (render_gx_fifo_irq_level() ? 1u << 21 : 0);  // the GX FIFO line is level-triggered
-    return (R32(0x04000208) & 1) ? (R32(0x04000210) & lines) : 0;
+    // (asked after every register access: the GX FIFO line, level-triggered, only when it is enabled)
+    u32 enabled = (R32(0x04000208) & 1) ? R32(0x04000210) : 0;
+    if (!enabled) return 0;
+    u32 lines = sIF | ((enabled & 1u << 21) && render_gx_fifo_irq_level() ? 1u << 21 : 0);
+    return enabled & lines;
 }
 
 // ---- timers (0x04000100 + 4n: counter/reload u16, control u16)
@@ -475,6 +478,14 @@ static void dma_run(int ch) {
         R32(base + 8) = cnt & ~0x80000000u;
         return;
     }
+    // memory to memory, both ascending and not overlapping: one copy (the words the loop below would copy)
+    int incDst = dc == 0 || dc == 3;
+    if (sc == 0 && incDst && !dma_is_io(src) && !dma_is_io(dst) && (dst + (uintptr_t)n * w <= src || src + (uintptr_t)n * w <= dst)) {
+        memcpy((void *)dst, (const void *)src, (size_t)n * w);
+        src += (uintptr_t)n * w;
+        dst += (uintptr_t)n * w;
+        n = 0;
+    }
     for (u32 i = 0; i < n; i++) {
         u32 v;
         if (src == IO1 + 0x10) v = card_read_data();
@@ -630,15 +641,15 @@ static void io_spin_check(void) {
     host_advance_to_next_event();
 }
 
+static long sIoLog = -2;  // ACWW_IOLOG
 static void io_write(u32 a, u32 old) {
     u32 w = a & ~3u;
     if (!sTimingLegacy) {
         sPollAddr = ~0u;  // (a write ends a polling loop)
         io_spin_check();
     }
-    static long logw = -2;
-    if (logw == -2) logw = getenv("ACWW_IOLOG") ? strtol(getenv("ACWW_IOLOG"), 0, 16) : -1;
-    if ((long)w == logw) fprintf(stderr, "io: frame %llu [%08x] %08x -> %08x\n", (unsigned long long)host_frame(), w, old, R32(w));
+    if (sIoLog == -2) sIoLog = getenv("ACWW_IOLOG") ? strtol(getenv("ACWW_IOLOG"), 0, 16) : -1;
+    if ((long)w == sIoLog) fprintf(stderr, "io: frame %llu [%08x] %08x -> %08x\n", (unsigned long long)host_frame(), w, old, R32(w));
     if (is_display(w)) { forward_display(w, old); return; }
     switch (w) {
     case 0x04000214: { u32 v = R32(w); sIF &= ~v; R32(w) = sIF; break; }
@@ -839,6 +850,31 @@ unsigned long long HostIo_Write(uintptr_t addr, unsigned int size, unsigned long
     }
     if (traced) io_access_done();
     return v;
+}
+
+// MIi_CpuSend32 to a 3D command port (sdk.c), most of the game's register writes: each word as HostIo_Write takes
+// it, without the dispatch that the port decides once (a display register: the 3D engine, forward_display). Through
+// HostIo_Write while a trace or the histogram wants every access, in an H-blank handler, or for ACWW_IOLOG.
+void HostIo_Send32(uintptr_t addr, const u32 *src, u32 n) {
+    u32 a = (u32)addr;
+    if (sIoTrace != 0 || sIoHist != 0 || sHBlankLine >= 0 || sIoLog != -1 || a < 0x04000400 || a >= 0x04000600) {
+        for (u32 i = 0; i < n; i++) HostIo_Write(addr, 4, src[i]);
+        return;
+    }
+    HOST_PROF(PROF_REGS);
+    void *caller = __builtin_return_address(0);
+    for (u32 i = 0; i < n; i++) {
+        sIoCount++;
+        sRing[sRingPos++ & 15] = (struct IoLog){a, 1, (uintptr_t)caller};
+        R32(a) = src[i];
+        if (!sTimingLegacy) {
+            sPollAddr = ~0u;
+            io_spin_check();
+        }
+        sGxWrites++;
+        render_write32(a, src[i]);
+        io_access_done();
+    }
 }
 
 // ---- ACWW_HIGHMEM=1 (x86-64 Linux): the low-4 GB poisoning harness (docs/portability.md 3.0, 3.3). The whole low
