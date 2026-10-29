@@ -476,3 +476,8 @@ the exheader can enable core 2 on the New 3DS (1.3).
   GPU (`GPU wait`: frame begin, display transfers; 0 in Azahar) and the geometry engine's lighting and vertices
   apart (Azahar: lighting 2.7, vertices 5.7, the rest of it - FIFO, matrices, timing - 6.2 ms). Azahar's
   function-level samples aren't the hardware's (`lighting` is ~250 instructions without calls, ~900 a frame).
+- 2026-10-29: on hardware with a list drawn once (commit b45a8d9e): about 33 frames a second (30 ms, was 34).
+  Milliseconds a frame from frame 360 on: registers 4.4-5.6, geometry 4.1-5.1 + vertices 3.0-3.4 + lighting
+  1.2-1.5, game 3.8-4.0, 2D 3.0-3.8, 3D 2.3-2.5 (was 6.0-7.8), compositing 2.2-2.5, sound 1.6-1.9, DMA 1.0-1.4,
+  GPU wait 0.5-0.7, frontend and pacing 0.1-0.3. So the waits for the GPU are small; what has to stay on the
+  game's core (game, registers, DMA, the geometry engine, sound) is about 21 ms, the renderers about 9.
