@@ -20,6 +20,7 @@
 // frame's end (an H-blank change of them in the frame shows in the whole frame).
 
 #include "pica_display.h"
+#include "prof.h"
 
 #ifndef __3DS__
 
@@ -484,6 +485,7 @@ static void group(const Group *g) {
 
 static void upload(void *src, C3D_Tex *t, u32 bytes, GX_TRANSFER_FORMAT fmt) {
     GSPGPU_FlushDataCache(src, bytes);
+    HOST_PROF(PROF_GPU);
     C3D_SyncDisplayTransfer(src, GX_BUFFER_DIM(W, H), t->data, GX_BUFFER_DIM(W, H),
                             kLinearToTiled | GX_TRANSFER_IN_FORMAT(fmt) | GX_TRANSFER_OUT_FORMAT(fmt));
 }
@@ -523,7 +525,10 @@ void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
     for (int e = 0; e < 2; e++)
         for (int y = 0; y < H; y++)
             if (!sLayers.line[e][y].white) used[e] |= sLayers.line[e][y].dispcnt, cpuBg[e] |= ~sLayers.line[e][y].gpuBg & 15u;
-    C3D_FrameBegin(0);
+    {
+        HOST_PROF(PROF_GPU);
+        C3D_FrameBegin(0);  // (waits for the GPU's work before)
+    }
     for (int e = 0; e < 2; e++) {
         for (int n = 0; n < 4; n++)
             if ((used[e] & 0x100u << n) && (cpuBg[e] >> n & 1))

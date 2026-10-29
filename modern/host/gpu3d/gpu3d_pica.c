@@ -14,6 +14,7 @@
 // Not done: anti-aliasing (the GPU has no coverage), and what the game doesn't use (toon / highlight, shadows, edge marking, wireframe, the rear plane).
 
 #include "gpu3d_internal.h"
+#include "../prof.h"
 
 #ifndef __3DS__
 
@@ -277,7 +278,10 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
     if (fogAlpha && (cc & 0x8000)) ca = (fa * (u32)fog_density(r, (s32)cd) + ca * (128 - (u32)fog_density(r, (s32)cd))) >> 7;
     u32 a8 = ca * 255 / 31;
 
-    C3D_FrameBegin(0);  // (not paced to the display: hw.c paces the frames)
+    {
+        HOST_PROF(PROF_GPU);
+        C3D_FrameBegin(0);  // (not paced to the display: hw.c paces the frames; waits for the GPU's work before)
+    }
     // (the colour premultiplied as the polygons')
     C3D_RenderTargetClear(target, C3D_CLEAR_ALL,
                           (cr * 255 / 63 * a8 / 255) << 24 | (cg * 255 / 63 * a8 / 255) << 16 |
@@ -362,9 +366,12 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
     u32 flags3 = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
                  GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
                  GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
-    C3D_SyncDisplayTransfer(sTarget->frameBuf.colorBuf, GX_BUFFER_DIM(W, H), sColorOut, GX_BUFFER_DIM(W, H), flags3);
     int fog = (r->dispcnt & 0x80) != 0;  // (the depth and the fog flags are only the fog pass's)
-    if (fog) C3D_SyncDisplayTransfer(sTarget->frameBuf.depthBuf, GX_BUFFER_DIM(W, H), sDepthOut, GX_BUFFER_DIM(W, H), flags3);
+    {
+        HOST_PROF(PROF_GPU);
+        C3D_SyncDisplayTransfer(sTarget->frameBuf.colorBuf, GX_BUFFER_DIM(W, H), sColorOut, GX_BUFFER_DIM(W, H), flags3);
+        if (fog) C3D_SyncDisplayTransfer(sTarget->frameBuf.depthBuf, GX_BUFFER_DIM(W, H), sDepthOut, GX_BUFFER_DIM(W, H), flags3);
+    }
     C3D_FrameEnd(0);
     GSPGPU_InvalidateDataCache(sColorOut, W * H * 4);
     if (fog) GSPGPU_InvalidateDataCache(sDepthOut, W * H * 4);
