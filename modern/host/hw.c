@@ -792,6 +792,8 @@ static uintptr_t io_last_caller(void) { return sRing[(sRingPos - 1) & 15].pc; }
 // free into heaps that aren't there any more outside the game's threads
 void host_quit(void) {
     threads_stop();
+    extern void pxi7_save_flush(void);
+    pxi7_save_flush();
     extern void snd7_output_close(void);
     snd7_output_close();
     extern void frontend_shutdown(void);
@@ -808,6 +810,8 @@ void host_reset_system(void) {
     fprintf(stderr, "host: the game reset the system (frame %llu)%s\n", (unsigned long long)host_frame(),
             getenv("ACWW_HEADLESS") ? ": the run ends" : ": starting again");
     if (getenv("ACWW_HEADLESS")) host_quit();
+    extern void pxi7_save_flush(void);
+    pxi7_save_flush();
     extern void snd7_output_close(void);
     snd7_output_close();
     extern void frontend_shutdown(void);

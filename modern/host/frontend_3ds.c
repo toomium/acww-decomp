@@ -14,6 +14,7 @@
 #include "pica_display.h"
 
 int render_presenting(void);  // (render.h: not includable beside libctru, whose u32 differs from host.h's)
+void pxi7_save_flush(void);   // (pxi7.c)
 
 static AcwwShm sShm;
 
@@ -95,7 +96,10 @@ static void show(gfxScreen_t screen, const uint32_t *px) {
 static aptHookCookie sAptHook;
 static void apt_hook(APT_HookType hook, void *param) {
     (void)param;
-    if (hook == APTHOOK_ONSUSPEND || hook == APTHOOK_ONSLEEP || hook == APTHOOK_ONEXIT) pdisp_idle();
+    if (hook == APTHOOK_ONSUSPEND || hook == APTHOOK_ONSLEEP || hook == APTHOOK_ONEXIT) {
+        pdisp_idle();
+        pxi7_save_flush();  // (the console may be switched off from there)
+    }
 }
 
 AcwwShm *frontend_backend_open(const char *argv0) {

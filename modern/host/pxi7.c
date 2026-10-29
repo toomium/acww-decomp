@@ -267,9 +267,22 @@ static void save_load(u32 size) {
         fprintf(stderr, "pxi7: save memory %#x bytes, %#zx loaded from %s\n", size, n, sSavePath);
     }
 }
-// write a changed range through to the file (the whole memory when the file is new)
+// a changed range, written to the file (the whole memory when the file is new) once the game has written nothing for
+// half a second: a save is hundreds of page writes, each one through to the SD card took the 3DS seconds of slow
+// frames. pxi7_save_flush also runs before the program ends and when the 3DS goes to the home menu or to sleep.
+static u32 sDirtyLo = ~0u, sDirtyHi;
+static u64 sFlushAt;
 static void save_store(u32 at, u32 len) {
     if (!sSavePath || at >= sSaveSize) return;
+    if (len > sSaveSize - at) len = sSaveSize - at;
+    if (at < sDirtyLo) sDirtyLo = at;
+    if (at + len > sDirtyHi) sDirtyHi = at + len;
+    sFlushAt = host_frame() + 30;
+}
+void pxi7_save_flush(void) {
+    if (sDirtyLo >= sDirtyHi || !sSavePath) return;
+    u32 at = sDirtyLo, len = sDirtyHi - sDirtyLo;
+    sDirtyLo = ~0u, sDirtyHi = 0;
     if (!sSaveFile) {
         sSaveFile = fopen(sSavePath, "w+b");
         if (!sSaveFile) { perror(sSavePath); sSavePath = 0; return; }
@@ -278,7 +291,6 @@ static void save_store(u32 at, u32 len) {
     long have = ftell(sSaveFile);
     if (have >= 0 && have < (long)sSaveSize)  // a new or short file: complete it with the memory's rest first
         fwrite(sSave + have, 1, sSaveSize - (u32)have, sSaveFile);
-    if (len > sSaveSize - at) len = sSaveSize - at;
     fseek(sSaveFile, (long)at, SEEK_SET);
     fwrite(sSave + at, 1, len, sSaveFile);
     fflush(sSaveFile);
@@ -360,6 +372,7 @@ static void tp_command(u32 data) {
 }
 
 void pxi7_vblank(void) {
+    if (sDirtyLo < sDirtyHi && host_frame() >= sFlushAt) pxi7_save_flush();
     if (sTpAuto && sCount == 0) { tp_sample(); pxi7_send(6 | (16u << 8) << 6); }
 }
 
