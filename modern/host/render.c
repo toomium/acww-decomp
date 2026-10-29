@@ -640,7 +640,7 @@ void render_frame(void) {
     }
     if (sMelon) melon_frame();
     HOST_PROF(PROF_2D);
-    if (sPica) pdisp_wait(PDISP_COMP);  // (the GPU thread composites from the layers the 2D renderer makes)
+    if (sPica) pdisp_wait(PDISP_COMP, 1);  // (the 2D renderer records into the record that compositing drew)
     u64 t0 = host_plat_time_ns();
     if (sGpu2d || sGpu3d) host_vram_flush();
     if (sGpu2d) {

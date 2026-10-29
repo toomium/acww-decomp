@@ -17,11 +17,11 @@ void pdisp_frame(void *texture3d, const uint32_t *picture3d);
 // the last frame's screen (0 top, 1 bottom) read back: 256x192, 0x00RRGGBB
 const uint32_t *pdisp_screen(int screen);
 // The GPU thread (the 3DS's core 2): a job for it, of a kind (done at once where there is none), in turn after the
-// others; waiting until the last job of a kind is done (before what it reads changes), or every job (before citro3d
-// is used elsewhere); the profile's marker its parts go to (prof.h)
+// others; waiting until the last job of a kind is done (older 1: the one before it; before what it reads changes),
+// or every job (before citro3d is used elsewhere); the profile's marker its parts go to (prof.h)
 enum { PDISP_3D, PDISP_COMP };
 void pdisp_submit(int kind, void (*job)(void *), void *arg);
-void pdisp_wait(int kind);
+void pdisp_wait(int kind, int older);
 void pdisp_idle(void);
 extern volatile int *gPicaProf;
 

@@ -244,7 +244,7 @@ static void apply(const State *s, const G3RenderState *r) {
 static u32 rgb5_to_6(u32 c) { return c ? c * 2 + 1 : 0; }
 
 void *g3p_picture(void) { return sPicture >= 0 ? &sPic[sPicture] : 0; }
-void g3p_wait(void) { pdisp_wait(PDISP_3D); }
+void g3p_wait(void) { pdisp_wait(PDISP_3D, 0); }
 
 // the fog's density (0-128) at depth z, as gpu3d_raster.c fog_pass
 static s32 fog_density(const G3RenderState *r, s32 z) {
@@ -280,7 +280,7 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
         render(r, img, pal, texChanged, color, depth, flags);
         return;
     }
-    pdisp_wait(PDISP_3D);
+    pdisp_wait(PDISP_3D, 0);
     sJob.r = r, sJob.img = img, sJob.pal = pal, sJob.texChanged = texChanged;
     sPicture = sJobPicture = sPicture < 0 ? 0 : sPicture ^ 1;
     pdisp_submit(PDISP_3D, render_job, 0);

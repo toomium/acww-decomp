@@ -30,7 +30,7 @@ struct Gpu2dLayers *pdisp_layers(void) { return 0; }
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
 void pdisp_submit(int kind, void (*job)(void *), void *arg) { (void)kind, job(arg); }
-void pdisp_wait(int kind) { (void)kind; }
+void pdisp_wait(int kind, int older) { (void)kind, (void)older; }
 void pdisp_idle(void) {}
 
 #else
@@ -96,7 +96,7 @@ static Thread sWorker;
 static LightLock sLock;  // (over the queue and the counts)
 static CondVar sChanged;
 static struct { void (*fn)(void *); void *arg; } sQueue[QUEUE];
-static u32 sSubmitted, sDone, sLastOf[2];  // jobs submitted, done; the number of the last of each kind
+static u32 sSubmitted, sDone, sLastOf[2][2];  // jobs submitted, done; the numbers of the last two of each kind
 static int sDelayMs;
 
 static void worker(void *arg) {
@@ -128,25 +128,26 @@ static void start_worker(void) {
     if (sWorker) gPicaProf = &gHostProfWorker;
     fprintf(stderr, "3ds: the GPU work %s\n", sWorker ? "on core 2" : "on the game's core (no core 2)");
 }
-static void wait_done(int last, int kind) {
+static void wait_done(int last, int kind, int older) {
     if (!sWorker) return;
     LightLock_Lock(&sLock);
-    u32 n = last ? sSubmitted : sLastOf[kind];
+    u32 n = last ? sSubmitted : sLastOf[kind][older];
     if (sDone < n) {
         HOST_PROF(PROF_WAIT);
         while (sDone < n) CondVar_Wait(&sChanged, &sLock);
     }
     LightLock_Unlock(&sLock);
 }
-void pdisp_wait(int kind) { wait_done(0, kind); }
-void pdisp_idle(void) { wait_done(1, 0); }
+void pdisp_wait(int kind, int older) { wait_done(0, kind, older); }
+void pdisp_idle(void) { wait_done(1, 0, 0); }
 void pdisp_submit(int kind, void (*job)(void *), void *arg) {
     start_worker();
     if (!sWorker) { job(arg); return; }
     LightLock_Lock(&sLock);
     while (sSubmitted - sDone >= QUEUE) CondVar_Wait(&sChanged, &sLock);
     sQueue[sSubmitted % QUEUE].fn = job, sQueue[sSubmitted % QUEUE].arg = arg;
-    sLastOf[kind] = ++sSubmitted;
+    sLastOf[kind][1] = sLastOf[kind][0];
+    sLastOf[kind][0] = ++sSubmitted;
     CondVar_WakeUp(&sChanged, ARBITRATION_SIGNAL_ALL);
     LightLock_Unlock(&sLock);
 }
@@ -603,26 +604,27 @@ static int same_gpu_state(const Gpu2dLineState *a, const Gpu2dLineState *b) {
            a->white == b->white;
 }
 
+// (two frames' arguments in turn, as the 2D renderer's records: the compositing before the last may still run)
 static void frame_job(void *arg);
-static void *sTexture3d;
-static const uint32_t *sPicture3d;
+static struct FrameArgs { void *texture3d; const uint32_t *picture3d; int record; } sFrameArgs[2];
 static int sHash = -1;
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
-    pdisp_wait(PDISP_COMP);  // (the last compositing's 3D picture)
+    pdisp_wait(PDISP_COMP, 1);  // (the arguments of the compositing before the last)
     sScreenRead[0] = sScreenRead[1] = 0;
-    sTexture3d = texture3d, sPicture3d = picture3d;
-    pdisp_submit(PDISP_COMP, frame_job, 0);
+    int record = gpu2d_record();
+    sFrameArgs[record] = (struct FrameArgs){texture3d, picture3d, record};
+    pdisp_submit(PDISP_COMP, frame_job, &sFrameArgs[record]);
 }
 
 static void frame_job(void *arg) {
-    (void)arg;
+    const struct FrameArgs *a = arg;
     {  // the layers the 2D renderer recorded (render.c: Gpu2dFrameInput.deferLayers)
         HOST_PROF_ON(gPicaProf, PROF_2D);
-        gpu2d_draw_layers();
+        gpu2d_draw_layers(a->record);
     }
     HOST_PROF_ON(gPicaProf, PROF_COMP);
-    void *texture3d = sTexture3d;
-    const uint32_t *picture3d = sPicture3d;
+    void *texture3d = a->texture3d;
+    const uint32_t *picture3d = a->picture3d;
     sFrame++;
     s3dTex = texture3d ? (C3D_Tex *)texture3d : &s3d;
     s3dPremultiplied = texture3d != 0;
