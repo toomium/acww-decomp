@@ -419,11 +419,19 @@ static void run_events_body(void) {
             { static unsigned long long lastIo; fprintf(stderr, " io %llu", (unsigned long long)sIoCount - lastIo); lastIo = sIoCount; }
             fprintf(stderr, " vramcnt %08x %08x ime %x ie %08x if %08x cpu %x\n", R32(0x04000240), R32(0x04000244), R32(0x04000208), R32(0x04000210), sIF, host_irq_state());
         }
+        static u64 prevFrame, slowest;  // (ACWW_FPS: the longest frame of the 120, real time)
+        if (getenv("ACWW_FPS")) {
+            u64 t = host_plat_time_ns();
+            if (prevFrame && t - prevFrame > slowest) slowest = t - prevFrame;
+            prevFrame = t;
+        }
         if (getenv("ACWW_FPS") && host_frame() % 120 == 0) {  // frames per second of real time, over the last 120
             static u64 last;
             u64 now = host_plat_time_ns();
             if (last) {
-                fprintf(stderr, "fps: frame %llu %.1f\n", (unsigned long long)host_frame(), 120 / ((double)(now - last) * 1e-9));
+                fprintf(stderr, "fps: frame %llu %.1f, the slowest frame %.1f ms\n", (unsigned long long)host_frame(),
+                        120 / ((double)(now - last) * 1e-9), slowest * 1e-6);
+                slowest = 0;
                 prof_report((double)(now - last) / 120e6);
             } else if (!thread_start(prof_sampler, 0, 1)) {
                 fprintf(stderr, "host: no thread for ACWW_FPS's profile\n");

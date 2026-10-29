@@ -20,7 +20,7 @@
 void host_plat_init(void) {
     freopen(DIR "log.txt", "w", stdout);
     freopen(DIR "log.txt", "a", stderr);
-    setvbuf(stderr, 0, _IONBF, 0);
+    setvbuf(stderr, 0, _IOLBF, 1024);  // (a line at a time: unbuffered, every piece of a line was a write to the SD card)
     FILE *f = fopen(DIR "acww.cfg", "r");
     static char line[16384];  // (input scripts: ACWW_KEYS is several KB)
     while (f && fgets(line, sizeof line, f)) {
