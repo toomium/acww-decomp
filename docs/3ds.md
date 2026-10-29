@@ -578,3 +578,13 @@ the exheader can enable core 2 on the New 3DS (1.3).
   lighting 1.2; was 7.5), DMA 1.0 -> 0.1; the rest as before (the name entry about 60, bound by core 2). The sound
   in the benchmark (`ACWW_FAST=1`, unpaced) can't be right: slower than real time the DSP's queue runs dry
   (crackles), faster the ring overflows and `feed_audio` skips ahead (jumps).
+- 2026-10-29: on hardware, paced (the user): the hitch every 2 seconds was `ACWW_FPS`'s report, written to the SD
+  card unbuffered, piece by piece (stderr is line-buffered now: commit 0f239ede). Still: frames of 50-90 ms (the
+  `fps:` line's slowest frame now) and odd sound, worse in the bus. Two causes found: (1) the sound fed a 1024-frame
+  buffer as soon as one was waiting, so the DSP had at most about 30 ms queued and every hitch ran it dry; now a
+  level near 2.5 buffers held by playing up to 0.5 % faster or slower, three buffers waiting after it ran dry
+  (`sound:` line with `ACWW_FPS`: how often). (2) The PICA's texture cache decoded every 4x4 texture again when any
+  palette byte changed (the game animates palettes): about 20 textures, 100,000 texels, every few 3D pictures, 40-60
+  ms of the GPU thread in Azahar; now each 4x4 texture keeps the palette bytes its blocks use. Azahar's title, paced:
+  47-50 -> 50-54 frames a second, the slowest frames 85-110 -> 50-60 ms (the 3D frames' geometry). Exact (6001
+  pictures). The `fps:` line is followed by the slowest frame's parts (milliseconds per part, both threads).
