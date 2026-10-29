@@ -652,3 +652,12 @@ the exheader can enable core 2 on the New 3DS (1.3).
 - 2026-10-29, for later (the user): the wide view's text boxes end at the DS's old bottom edge (24 lines of world
   below them); to be solved later (options: the 2D layers moved down on the top screen only, where there is no
   touch; or on both screens, the touch then following the 2D layers).
+- 2026-10-29: the touch screen gave every touch at 0,0 (the user: "recognised, but only binary"), on the PC too:
+  nothing wrote the firmware's user settings to HW_NVRAM_USER_INFO (0x027ffc80), where the DS's boot firmware
+  leaves them, so `TP_GetUserInfo` read a calibration of 0 and `TP_GetCalibratedPoint` made every point 0,0 (the
+  runtime's own inverse, `tp_raw`, read them from the flash). Now pxi7.c copies the newer valid copy there (0x70
+  bytes, before wm7.c's MAC address) and `tp_raw` reads the same place: touches at 18,14 / 238,174 / 0,0 / 255,191
+  / 128,96 reach the game as 18,14 / 237,173 / 0,0 / 254,190 / 127,95 (the integer calibration's rounding, as on
+  a DS). The PC's save script (screenshots, sound, save file) and the oracle's quick run are byte for byte the
+  build before's. Seen with Azahar on a virtual X server (Xvfb) and xdotool's clicks: the 3DS's mapping
+  (frontend_3ds.c) was right all along.
