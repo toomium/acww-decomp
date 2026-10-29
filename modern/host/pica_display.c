@@ -170,8 +170,10 @@ void pdisp_frame_begun(int kind) {
     }
 }
 
-static int tex(C3D_Tex *t, GPU_TEXCOLOR fmt) {
-    if (!C3D_TexInit(t, TEX, TEX, fmt)) return 0;
+// (vram: in VRAM when it fits, the layers: the GPU reads its own memory much faster than the main memory, and the
+// compositing reads them over and over; else in linear memory)
+static int tex(C3D_Tex *t, GPU_TEXCOLOR fmt, int vram) {
+    if (!(vram && C3D_TexInitVRAM(t, TEX, TEX, fmt)) && !C3D_TexInit(t, TEX, TEX, fmt)) return 0;
     C3D_TexSetFilter(t, GPU_NEAREST, GPU_NEAREST);
     C3D_TexSetWrap(t, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     return 1;
@@ -185,15 +187,15 @@ int pdisp_init(void) {
     sReadback = linearAlloc(TEX * TEX * 4);
     s3dStage = linearAlloc(W * H * 4);
     sDvlb = DVLB_ParseFile((u32 *)pica_display_shbin, pica_display_shbin_size);
-    if (!sV || !sReadback || !s3dStage || !sDvlb || !tex(&s3d, GPU_RGBA8)) return 0;
+    if (!sV || !sReadback || !s3dStage || !sDvlb || !tex(&s3d, GPU_RGBA8, 0)) return 0;
     shaderProgramInit(&sProgram);
     shaderProgramSetVsh(&sProgram, &sDvlb->DVLE[0]);
     sUProjection = shaderInstanceGetUniformLocation(sProgram.vertexShader, "projection");
     for (int e = 0; e < 2; e++) {
         for (int n = 0; n < 4; n++)
-            if (!(sLayers.bg[e][n] = linearAlloc(W * H * 2)) || !tex(&sBg[e][n], GPU_RGBA5551)) return 0;
-        if (!(sLayers.obj[e] = linearAlloc(W * H * 4)) || !tex(&sObj[e], GPU_RGBA8)) return 0;
-        if (!(sLayers.region[e] = linearAlloc(W * H * 4)) || !tex(&sRegion[e], GPU_RGBA8)) return 0;
+            if (!(sLayers.bg[e][n] = linearAlloc(W * H * 2)) || !tex(&sBg[e][n], GPU_RGBA5551, 1)) return 0;
+        if (!(sLayers.obj[e] = linearAlloc(W * H * 4)) || !tex(&sObj[e], GPU_RGBA8, 1)) return 0;
+        if (!(sLayers.region[e] = linearAlloc(W * H * 4)) || !tex(&sRegion[e], GPU_RGBA8, 1)) return 0;
         if (!C3D_TexInitVRAM(&sComp[e], TEX, TEX, GPU_RGBA8)) return 0;
         C3D_TexSetFilter(&sComp[e], GPU_NEAREST, GPU_NEAREST);
         sCompTarget[e] = C3D_RenderTargetCreateFromTex(&sComp[e], GPU_TEXFACE_2D, 0, GPU_RB_DEPTH24_STENCIL8);
@@ -211,6 +213,8 @@ void pdisp_attach_screens(void) {
     sScreen[1] = C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, -1);
     if (sScreen[0]) C3D_RenderTargetSetOutput(sScreen[0], GFX_TOP, GFX_LEFT, out);
     if (sScreen[1]) C3D_RenderTargetSetOutput(sScreen[1], GFX_BOTTOM, GFX_LEFT, out);
+    fprintf(stderr, "pica: %lu KB of VRAM free%s\n", (unsigned long)(vramSpaceFree() / 1024),
+            sScreen[0] && sScreen[1] ? "" : " (no screen targets)");
 }
 
 struct Gpu2dLayers *pdisp_layers(void) { return sV ? &sLayers : 0; }
