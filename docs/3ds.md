@@ -622,3 +622,16 @@ the exheader can enable core 2 on the New 3DS (1.3).
   `POLYPHASE`) and a fixed rate (the queue level's rate changes every frame).
 - 2026-10-29, for later (the user): ZR as a second B (running) on the New 3DS - tried in commit 6fac6f91 and taken
   out again for now. Also wanted later: the map on ZR, the pockets on X, pulling weeds and shaking trees on Y.
+- 2026-10-29: the wide view, step 1 (the user: "more of the world at the same pixel size", as emerald-3ds; no
+  change to the game): `ACWW_WIDE=1`. In the town the game uses no display capture and no screen swap (POWCNT
+  0x020f, DISPCAPCNT not written there): the 3D world is on the bottom screen only, the top one is 2D (the sky).
+  The geometry engine clips the x and y planes at +-25/16 w and +-5/4 w (a 400x240 picture, the DS's 256x192 in
+  its middle; `gpu3d_set_wide`, the screen positions not wrapped), gpu3d_pica.c draws into 512x256 pictures,
+  pica_display.c samples the DS's part for the compositing and fills the margins: the backdrop, the wide 3D
+  picture, the master brightness of the middle line. The layers' textures then live in linear memory (the 3D
+  pictures take the VRAM: 2013 KB left), so the compositing's GPU time goes up again. In Azahar the attract
+  demo's town fills the bottom screen (320x240) without a visible seam. Normal mode unchanged: the PC's save
+  script byte for byte, Azahar's 6001 pictures and the sound exact. Next: on hardware, whether the game draws
+  the objects near the edges early enough (it may cull what the DS wouldn't show), the speed; then step 2 if
+  needed (the game's culling, behind an option). Not done: more polygon RAM (the DS's 2048 / 6144 limits now
+  count the margins' polygons too: watch for missing polygons), the margins' fog colour and per-line effects.
