@@ -27,6 +27,7 @@
 int pdisp_init(void) { return 0; }
 void pdisp_attach_screens(void) {}
 int pdisp_scaled(void) { return 0; }
+int pdisp_touch_y0(void) { return 24; }
 struct Gpu2dLayers *pdisp_layers(void) { return 0; }
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
@@ -209,6 +210,9 @@ int pdisp_init(void) {
     }
     return 1;
 }
+
+static volatile int sTouchY0 = (240 - H) / 2;  // the bottom screen's DS picture: its first line (the touch screen)
+int pdisp_touch_y0(void) { return sTouchY0; }
 
 // the screens 1:1 (256x192, pixel for pixel); ACWW_3DS_SCALE=1.25: 1.25 times (320x240)
 int pdisp_scaled(void) {
@@ -466,7 +470,7 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
     float y0 = (float)g->y0[i], y1 = (float)g->y1[i];
     if (l == 0 && is3d) {  // (the 3D layer scrolled by BG0HOFS; nothing where it is scrolled away)
         float x0 = s->hofs3d < 0 ? (float)-s->hofs3d : 0, x1 = s->hofs3d > 0 ? (float)(W - s->hofs3d) : W;
-        float ox = s3dWide ? GPU3D_WIDE_X : 0, oy = s3dWide ? GPU3D_WIDE_Y : 0, tw = s3dWide ? 512 : TEX;
+        float ox = s3dWide ? GPU3D_WIDE_X : 0, oy = s3dWide ? GPU3D_WIDE_TOP : 0, tw = s3dWide ? 512 : TEX;
         rect(x0, y0, x1, y1, (x0 + s->hofs3d + ox) / tw, (x1 + s->hofs3d + ox) / tw, y0 + oy, TEX, 0);
         return;
     }
@@ -644,25 +648,24 @@ static int same_gpu_state(const Gpu2dLineState *a, const Gpu2dLineState *b) {
            a->white == b->white;
 }
 
-// (two frames' arguments in turn, as the 2D renderer's records: the compositing before the last may still run)
 // The wide view (gpu3d.h): around the DS's picture at (x0, y0), its 3D world beyond the DS's screen: over the
 // backdrop, under the master brightness, those of the middle line (the 2D layers, fog and the effects are the DS
 // picture's only: a seam is expected)
 static void margins(float x0, float y0) {
     const Gpu2dLineState *m = &sLayers.line[0][H / 2];
-    float col[4], k = (float)GPU3D_WIDE_X, l = (float)GPU3D_WIDE_Y;
+    float col[4], k = (float)GPU3D_WIDE_X, l = (float)GPU3D_WIDE_TOP;
     C3D_AlphaTest(false, GPU_ALWAYS, 0);
     source(0);
     opaque();
     bgr555(m->backdrop, 1, col);
     begin();
-    rect(x0 - k, y0 - l, x0 + W + k, y0 + H + l, 0, 0, 0, TEX, col);
+    rect(x0 - k, y0 - l, x0 + W + k, y0 + H, 0, 0, 0, TEX, col);
     end();
     source(s3dTex);
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
     begin();
-    const float xy[4][2] = {{x0 - k, y0 - l}, {x0 + W + k, y0 - l}, {x0 + W + k, y0 + H + l}, {x0 - k, y0 + H + l}};
-    const float uv[4][2] = {{0, 1}, {(W + 2 * k) / 512, 1}, {(W + 2 * k) / 512, 1 - (H + 2 * l) / TEX}, {0, 1 - (H + 2 * l) / TEX}};
+    const float xy[4][2] = {{x0 - k, y0 - l}, {x0 + W + k, y0 - l}, {x0 + W + k, y0 + H}, {x0 - k, y0 + H}};
+    const float uv[4][2] = {{0, 1}, {(W + 2 * k) / 512, 1}, {(W + 2 * k) / 512, 1 - (H + l) / TEX}, {0, 1 - (H + l) / TEX}};
     quad(xy, uv, 0);
     end();
     u32 mb = m->masterBright, mode = mb >> 14, f = mb & 31;
@@ -671,12 +674,13 @@ static void margins(float x0, float y0) {
         source(0);
         C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
         begin();
-        rect(x0 - k, y0 - l, x0 + W + k, y0 + H + l, 0, 0, 0, TEX, q);
+        rect(x0 - k, y0 - l, x0 + W + k, y0 + H, 0, 0, 0, TEX, q);
         end();
     }
 }
 
 static void frame_job(void *arg);
+// (two frames' arguments in turn, as the 2D renderer's records: the compositing before the last may still run)
 static struct FrameArgs { void *texture3d; const uint32_t *picture3d; int record; } sFrameArgs[2];
 static int sHash = -1;
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
@@ -784,11 +788,14 @@ static void frame_job(void *arg) {
             end();
             pic = &sUp, pw = 2 * W, ph = 2 * H, size = UP;
         }
-        float dw = sUpTarget ? 320.0f : W, dh = sUpTarget ? 240.0f : H, x0 = (sw - dw) / 2, y0 = (240 - dh) / 2;
+        // (the wide view's DS picture at the screen's bottom edge: its 3D world above and at the sides)
+        int wide = s3dWide && e == 0 && (used[0] & 8);
+        float dw = sUpTarget ? 320.0f : W, dh = sUpTarget ? 240.0f : H, x0 = (sw - dw) / 2, y0 = wide ? 240 - H : (240 - dh) / 2;
+        if (s == 1) sTouchY0 = (int)y0;
         C3D_RenderTargetClear(sScreen[s], C3D_CLEAR_ALL, 0x000000ff, 0);
         C3D_FrameDrawOn(sScreen[s]);
         projection(sw, 240.0f, 1);
-        if (s3dWide && e == 0 && (used[0] & 8)) margins(x0, y0);
+        if (wide) margins(x0, y0);
         source(pic);
         opaque();
         begin();
