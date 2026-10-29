@@ -717,7 +717,11 @@ static void margins2d(int e, float x0, float y0, float sw) {
     Mtx_OrthoTilt(&m, -x0, sw - x0, 240.0f - y0, -y0, 0.0f, 1.0f, true);  // (the DS's pixels, as projection's)
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, sUProjection, &m);
     sMargin = 1, sX0 = -x0, sX1 = sw - x0, sY = y0;
+    // (not in the middle, where the DS's picture goes over it: the box in the turned target's pixels, a pixel inside
+    // the picture's edges, which the picture covers; x0 and y0 centre it, so it is the same either way round)
+    C3D_SetScissor(GPU_SCISSOR_INVERT, (u32)y0 + 1, (u32)x0 + 1, (u32)y0 + H - 1, (u32)x0 + W - 1);
     compose(e);
+    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 0, 0);
     sMargin = 0, sX0 = 0, sX1 = W, sY = 0;
     projection(sw, 240.0f, 1);
 }
