@@ -200,8 +200,8 @@ int g3p_init(void) {
     sDepthOut = linearAlloc(W * H * 4);
     sDvlb = DVLB_ParseFile((u32 *)gpu3d_pica_shbin, gpu3d_pica_shbin_size);
     if (!sTarget || !sVerts || !sColorOut || !sDepthOut || !sDvlb) return 0;
-    for (int i = 0; i < 2; i++) {
-        if (!C3D_TexInitVRAM(&sPic[i], 256, 256, GPU_RGBA8)) return 0;
+    for (int i = 0; i < 2; i++) {  // (the wide view: 512 wide for its 400 x 240)
+        if (!C3D_TexInitVRAM(&sPic[i], gpu3d_wide_wanted() ? 512 : 256, 256, GPU_RGBA8)) return 0;
         C3D_TexSetFilter(&sPic[i], GPU_NEAREST, GPU_NEAREST);
         if (!(sPicTarget[i] = C3D_RenderTargetCreateFromTex(&sPic[i], GPU_TEXFACE_2D, 0, GPU_RB_DEPTH24_STENCIL8)))
             return 0;
@@ -383,14 +383,17 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
         // (multiplications by reciprocals: the compiler keeps float divisions as divisions, which are slow here)
         static const float kSize[8] = {1 / 128.0f, 1 / 256.0f, 1 / 512.0f, 1 / 1024.0f,
                                        1 / 2048.0f, 1 / 4096.0f, 1 / 8192.0f, 1 / 16384.0f};  // (1 / (16 * size))
-        const float kx = 2.0f / (16 * W), ky = 2.0f / (16 * hy), kz = 1.0f / 16777215.0f, k6 = 1.0f / 63.0f;
+        // (the wide view: the DS's picture GPU3D_WIDE_X / Y in from the corner of the 512 x 256 picture)
+        const int wide = direct && gpu3d_wide();
+        const float kx = 2.0f / (16 * (wide ? 512 : W)), ky = 2.0f / (16 * hy), kz = 1.0f / 16777215.0f, k6 = 1.0f / 63.0f;
+        const float ox = wide ? GPU3D_WIDE_X * 16.0f : 0, oy = wide ? GPU3D_WIDE_Y * 16.0f : 0;
         float alpha = (float)(pa ? pa : 31) * (1.0f / 31.0f);
         float tw = s.tex ? kSize[p->texparam >> 20 & 7] : 1.0f, th = s.tex ? kSize[p->texparam >> 23 & 7] : 1.0f;
         PVertex pv[10];
         for (int i = 0; i < p->nv; i++) {
             const G3Vertex *v = p->v[i];
             float w = (float)(p->w[i] > 0 ? p->w[i] : 1);
-            float x = (float)v->hx * kx - 1.0f, y = 1.0f - (float)v->hy * ky;
+            float x = ((float)v->hx + ox) * kx - 1.0f, y = 1.0f - ((float)v->hy + oy) * ky;
             // (depth test "equal" passes within 0x200 on the DS, gpu3d_raster.c depth_pass: moved nearer by that, then
             // less or equal)
             float z = ((float)p->z[i] - (s.depthEq ? 0x200 : 0)) * kz;

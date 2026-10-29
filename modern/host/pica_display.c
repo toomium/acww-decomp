@@ -45,6 +45,7 @@ void pdisp_idle(void) {}
 #include <citro3d.h>
 
 #include "gpu2d/gpu2d.h"
+#include "gpu3d/gpu3d.h"
 
 extern const u8 pica_display_shbin[];  // (the vertex shader, pica_display.v.pica: picasso and bin2s)
 extern const u32 pica_display_shbin_size;
@@ -68,6 +69,7 @@ static C3D_Tex sBg[2][4], sObj[2], sRegion[2], s3d;
 static u32 *s3dStage;                  // the 3D picture as RGBA8, row by row
 static C3D_Tex *s3dTex;                // this frame's 3D picture: the GPU's (premultiplied) or s3d
 static int s3dPremultiplied;
+static int s3dWide;                    // this frame's 3D picture: the wide view's (gpu3d.h)
 static C3D_Tex sComp[2];               // each engine's picture
 static C3D_RenderTarget *sCompTarget[2], *sScreen[2];
 static C3D_Tex sUp;                    // a picture doubled (the screens' sharp scaling; RGB8, VRAM)
@@ -195,10 +197,11 @@ int pdisp_init(void) {
     shaderProgramSetVsh(&sProgram, &sDvlb->DVLE[0]);
     sUProjection = shaderInstanceGetUniformLocation(sProgram.vertexShader, "projection");
     for (int e = 0; e < 2; e++) {
+        int vram = !gpu3d_wide_wanted();  // (the wide view's 3D pictures take the VRAM: gpu3d_pica.c)
         for (int n = 0; n < 4; n++)
-            if (!(sLayers.bg[e][n] = linearAlloc(W * H * 2)) || !tex(&sBg[e][n], GPU_RGBA5551, 1)) return 0;
-        if (!(sLayers.obj[e] = linearAlloc(W * H * 4)) || !tex(&sObj[e], GPU_RGBA8, 1)) return 0;
-        if (!(sLayers.region[e] = linearAlloc(W * H * 4)) || !tex(&sRegion[e], GPU_RGBA8, 1)) return 0;
+            if (!(sLayers.bg[e][n] = linearAlloc(W * H * 2)) || !tex(&sBg[e][n], GPU_RGBA5551, vram)) return 0;
+        if (!(sLayers.obj[e] = linearAlloc(W * H * 4)) || !tex(&sObj[e], GPU_RGBA8, vram)) return 0;
+        if (!(sLayers.region[e] = linearAlloc(W * H * 4)) || !tex(&sRegion[e], GPU_RGBA8, vram)) return 0;
         if (!C3D_TexInitVRAM(&sComp[e], TEX, TEX, GPU_RGBA8)) return 0;
         C3D_TexSetFilter(&sComp[e], GPU_NEAREST, GPU_NEAREST);
         sCompTarget[e] = C3D_RenderTargetCreateFromTex(&sComp[e], GPU_TEXFACE_2D, 0, GPU_RB_DEPTH24_STENCIL8);
@@ -210,7 +213,7 @@ int pdisp_init(void) {
 // the screens 1:1 (256x192, pixel for pixel); ACWW_3DS_SCALE=1.25: 1.25 times (320x240)
 int pdisp_scaled(void) {
     static int scaled = -1;
-    if (scaled < 0) scaled = getenv("ACWW_3DS_SCALE") && atof(getenv("ACWW_3DS_SCALE")) == 1.25;
+    if (scaled < 0) scaled = getenv("ACWW_3DS_SCALE") && atof(getenv("ACWW_3DS_SCALE")) == 1.25 && !gpu3d_wide_wanted();
     return scaled;
 }
 
@@ -463,7 +466,8 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
     float y0 = (float)g->y0[i], y1 = (float)g->y1[i];
     if (l == 0 && is3d) {  // (the 3D layer scrolled by BG0HOFS; nothing where it is scrolled away)
         float x0 = s->hofs3d < 0 ? (float)-s->hofs3d : 0, x1 = s->hofs3d > 0 ? (float)(W - s->hofs3d) : W;
-        rect(x0, y0, x1, y1, (x0 + s->hofs3d) / TEX, (x1 + s->hofs3d) / TEX, y0, TEX, 0);
+        float ox = s3dWide ? GPU3D_WIDE_X : 0, oy = s3dWide ? GPU3D_WIDE_Y : 0, tw = s3dWide ? 512 : TEX;
+        rect(x0, y0, x1, y1, (x0 + s->hofs3d + ox) / tw, (x1 + s->hofs3d + ox) / tw, y0 + oy, TEX, 0);
         return;
     }
     if (!b) {  // (the OBJs, a BG the CPU drew)
@@ -641,6 +645,37 @@ static int same_gpu_state(const Gpu2dLineState *a, const Gpu2dLineState *b) {
 }
 
 // (two frames' arguments in turn, as the 2D renderer's records: the compositing before the last may still run)
+// The wide view (gpu3d.h): around the DS's picture at (x0, y0), its 3D world beyond the DS's screen: over the
+// backdrop, under the master brightness, those of the middle line (the 2D layers, fog and the effects are the DS
+// picture's only: a seam is expected)
+static void margins(float x0, float y0) {
+    const Gpu2dLineState *m = &sLayers.line[0][H / 2];
+    float col[4], k = (float)GPU3D_WIDE_X, l = (float)GPU3D_WIDE_Y;
+    C3D_AlphaTest(false, GPU_ALWAYS, 0);
+    source(0);
+    opaque();
+    bgr555(m->backdrop, 1, col);
+    begin();
+    rect(x0 - k, y0 - l, x0 + W + k, y0 + H + l, 0, 0, 0, TEX, col);
+    end();
+    source(s3dTex);
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
+    begin();
+    const float xy[4][2] = {{x0 - k, y0 - l}, {x0 + W + k, y0 - l}, {x0 + W + k, y0 + H + l}, {x0 - k, y0 + H + l}};
+    const float uv[4][2] = {{0, 1}, {(W + 2 * k) / 512, 1}, {(W + 2 * k) / 512, 1 - (H + 2 * l) / TEX}, {0, 1 - (H + 2 * l) / TEX}};
+    quad(xy, uv, 0);
+    end();
+    u32 mb = m->masterBright, mode = mb >> 14, f = mb & 31;
+    if ((mode == 1 || mode == 2) && f) {
+        float c = mode == 1 ? 1.0f : 0.0f, q[4] = {c, c, c, (float)(f > 16 ? 16 : f) / 16.0f};
+        source(0);
+        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
+        begin();
+        rect(x0 - k, y0 - l, x0 + W + k, y0 + H + l, 0, 0, 0, TEX, q);
+        end();
+    }
+}
+
 static void frame_job(void *arg);
 static struct FrameArgs { void *texture3d; const uint32_t *picture3d; int record; } sFrameArgs[2];
 static int sHash = -1;
@@ -664,6 +699,7 @@ static void frame_job(void *arg) {
     sFrame++;
     s3dTex = texture3d ? (C3D_Tex *)texture3d : &s3d;
     s3dPremultiplied = texture3d != 0;
+    s3dWide = texture3d && gpu3d_wide();
     if (!sMorton[0][1])
         for (int y = 0; y < 8; y++)
             for (int x = 0; x < 8; x++)
@@ -752,7 +788,9 @@ static void frame_job(void *arg) {
         C3D_RenderTargetClear(sScreen[s], C3D_CLEAR_ALL, 0x000000ff, 0);
         C3D_FrameDrawOn(sScreen[s]);
         projection(sw, 240.0f, 1);
+        if (s3dWide && e == 0 && (used[0] & 8)) margins(x0, y0);
         source(pic);
+        opaque();
         begin();
         const float xy[4][2] = {{x0, y0}, {x0 + dw, y0}, {x0 + dw, y0 + dh}, {x0, y0 + dh}};
         const float uv[4][2] = {{0, 1}, {pw / size, 1}, {pw / size, 1 - ph / size}, {0, 1 - ph / size}};

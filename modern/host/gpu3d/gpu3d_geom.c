@@ -62,6 +62,16 @@ u32 gG3Swaps;
 void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
 static int sRaster = 1;
 void gpu3d_set_raster(int on) { sRaster = on; }
+// the wide view: the x and y clip planes at +-num/den w (1/1: the DS's)
+static int sWide;
+static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
+int gpu3d_wide_wanted(void) { return getenv("ACWW_WIDE") && atoi(getenv("ACWW_WIDE")); }
+void gpu3d_set_wide(int on) {
+    sWide = on;
+    sClipNum[0] = on ? 128 + GPU3D_WIDE_X : 1, sClipDen[0] = on ? 128 : 1;
+    sClipNum[1] = on ? 96 + GPU3D_WIDE_Y : 1, sClipDen[1] = on ? 96 : 1;
+}
+int gpu3d_wide(void) { return sWide; }
 
 // ---- feature census
 static u64 sFeatureFrame[F_COUNT];
@@ -484,8 +494,8 @@ static void screen_position(G3Vertex *v) {
     s64 hy = floor_div(ny * sViewport[5] * 16, ws * 2) + sViewport[3] * 16;
     v->x = (s32)(hx >> 4) & 0x1ff;
     v->y = (s32)(hy >> 4) & 0x1ff;  // (192 for the bottom edge: no 8-bit wrap)
-    v->hx = (s32)hx & 0x1fff;
-    v->hy = (s32)hy & 0x1fff;
+    v->hx = sWide ? (s32)hx : (s32)hx & 0x1fff;
+    v->hy = sWide ? (s32)hy : (s32)hy & 0x1fff;
     v->screenDone = 1;
 }
 
@@ -493,20 +503,21 @@ static void screen_position(G3Vertex *v) {
 // interpolated from the vertex inside
 static G3Vertex sClipBuf[2][10];
 static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, int comp, int sign) {
-    s64 din = (s64)in->pos[3] - sign * (s64)in->pos[comp];
-    s64 dout = (s64)out->pos[3] - sign * (s64)out->pos[comp];
+    s64 num = sClipNum[comp], dn = sClipDen[comp];  // (the plane c = sign num/dn w; the DS's: 1/1)
+    s64 din = num * in->pos[3] - sign * dn * in->pos[comp];
+    s64 dout = num * out->pos[3] - sign * dn * out->pos[comp];
     s64 den = din - dout;
     // from the vertex outside towards the one inside, truncated towards zero (dout <= 0 < din: -dout / den >= 0)
 #define LERP(a, b) ((s32)((b) + div64(((s64)(a) - (b)) * -dout, den)))
     for (int i = 0; i < 4; i++) o->pos[i] = LERP(in->pos[i], out->pos[i]);
-    o->pos[comp] = sign * o->pos[3];
+    o->pos[comp] = sign * (s32)(num * o->pos[3] / dn);
     {   // (the 5-bit colours from the vertex inside, rounded up; when that vertex is the crossing of the same edge
         // with this axis's other plane, from the edge's far end instead: fitted to melonDS)
         const s32 *ic = in->color;
         s64 cdin = din, cden = den;
         if (in->farAxis == comp + 1) {
             ic = in->farColor;
-            cdin = (s64)in->farPos[3] - sign * (s64)in->farPos[comp];
+            cdin = num * in->farPos[3] - sign * dn * in->farPos[comp];
             cden = cdin - dout;
         }
         for (int i = 0; i < 3; i++) {  // (from the larger colour towards the smaller by a factor rounded up to 16
@@ -533,7 +544,8 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
     o->screenDone = 0;
 }
 static int inside(const G3Vertex *v, int comp, int sign) {
-    return sign > 0 ? v->pos[comp] <= v->pos[3] : v->pos[comp] >= -v->pos[3];
+    s64 c = sClipDen[comp] * v->pos[comp], w = sClipNum[comp] * v->pos[3];
+    return sign > 0 ? c <= w : c >= -w;
 }
 static int clip_plane(G3Vertex *dst, const G3Vertex *src, int n, int comp, int sign) {
     int m = 0;

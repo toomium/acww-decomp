@@ -124,12 +124,14 @@ void render_init(void) {
 #ifdef __3DS__
     // the 3DS: the polygons drawn by its GPU (gpu3d/gpu3d_pica.c), unless ACWW_RENDERER3D=own; the screens
     // composited by it (pica_display.c), unless ACWW_COMPOSITE=cpu
-    if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !gpu3d_use_pica())
+    int pica3d = sOwn3d && !env_is("ACWW_RENDERER3D", "own") && gpu3d_use_pica();
+    if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !pica3d)
         fprintf(stderr, "render: the 3DS GPU's renderer couldn't start: own\n");
     if (sOwn && !sCompare && !env_is("ACWW_COMPOSITE", "cpu")) {
         sPica = pdisp_init();
         if (!sPica) fprintf(stderr, "render: the 3DS GPU's compositing couldn't start: the CPU's\n");
         gpu3d_pica_direct(sPica);  // (its 3D pictures then straight from the GPU, not read back)
+        gpu3d_set_wide(sPica && pica3d && gpu3d_wide_wanted());  // (ACWW_WIDE: drawn only by these two)
     }
 #endif
     if (getenv("ACWW_RENDER_COMPARE_MAX")) sCompareMax = strtol(getenv("ACWW_RENDER_COMPARE_MAX"), 0, 10);
