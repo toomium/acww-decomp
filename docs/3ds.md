@@ -620,3 +620,5 @@ the exheader can enable core 2 on the New 3DS (1.3).
   in the title). Not yet tried: headphones; `ACWW_VOLUME=50` (commit 55c2295a: the channel's mix, which acts before
   the DSP's output stage); the PC build or a DS at the same place; the DSP's interpolation (`NDSP_INTERP_NONE` /
   `POLYPHASE`) and a fixed rate (the queue level's rate changes every frame).
+- 2026-10-29, for later (the user): ZR as a second B (running) on the New 3DS - tried in commit 6fac6f91 and taken
+  out again for now. Also wanted later: the map on ZR, the pockets on X, pulling weeds and shaking trees on Y.
