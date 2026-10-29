@@ -83,8 +83,10 @@ static const u32 kTiledToLinear = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TIL
 // while the game's thread goes on with the next frame. The jobs in turn, from a short queue: the game's thread waits
 // for the last one of a kind before it changes what that reads (render.c: the 3D engine's list and textures for the
 // 3D picture, the 2D renderer's layers for the compositing; here and gpu3d_pica.c: the jobs' own inputs), not for
-// the others (the game's frames are uneven: it works every third one, the 3D engine swaps then); VRAM and the BG
-// palettes, which the game changes when it likes, are copied for the compositing (snapshot). citro3d is the GPU thread's then: the game's thread uses it only when that is idle.
+// the others (the game's frames are uneven: it works every third one, the 3D engine swaps then). The 2D layers are
+// drawn here too, first: the 2D renderer records each line's state and copies VRAM's 2D banks, the palettes and
+// OAM, which the game changes when it likes (Gpu2dFrameInput.deferLayers); the compositing reads those copies.
+// citro3d is the GPU thread's then: the game's thread uses it only when that is idle.
 // Without core 2 (an Old 3DS; ACWW_PICA_THREAD=0) the jobs are done at once. For the check that a job sees what it
 // would at once: ACWW_PICA_DELAY=<ms>, each job waits that long first; ACWW_PICA_HASH=1, a hash of each composited
 // picture in the log.
@@ -601,76 +603,23 @@ static int same_gpu_state(const Gpu2dLineState *a, const Gpu2dLineState *b) {
            a->white == b->white;
 }
 
-// ---- the snapshot: what bg_texture reads from VRAM, copied at the same places into a copy of each engine's BG VRAM
-// (the map and the tile data up to its highest tile, for every BG state a line has where the GPU draws the BG), and
-// the BG palettes; the layers then point to the copies
-static u8 sSnapVram[2][0x80000];
-static const u8 *sSnapGran[2][32];
-static u8 sSnapPal[2][0x200];
-static u32 sSnapBytes;
-static void snap_copy(int e, u32 addr, u32 len) {
-    const u8 *const *gran = sLayers.bgGran[e];
-    u32 mask = sLayers.bgMask[e];
-    sSnapBytes += len;
-    while (len) {
-        u32 a = addr & mask, in = 0x4000 - (a & 0x3fff), n = in < len ? in : len;
-        memcpy(sSnapVram[e] + a, gran[a >> 14] + (a & 0x3fff), n);
-        addr += n, len -= n;
-    }
-}
-static void snapshot(void) {
-    sSnapBytes = 0;
-    for (int e = 0; e < 2; e++) {
-        u16 last[4] = {0};
-        u32 lastBase[4] = {0};
-        u8 lastKind[4] = {0};
-        for (int y = 0; y < H; y++) {
-            const Gpu2dLineState *s = &sLayers.line[e][y];
-            if (s->white) continue;
-            for (int n = 0; n < 4; n++) {
-                // (as group / layer_bind: shown, drawn by the GPU, not the 3D layer)
-                if (!(s->dispcnt & 0x100u << n) || !(s->gpuBg >> n & 1) || (n == 0 && e == 0 && (s->dispcnt & 8)))
-                    continue;
-                u32 base = e == 0 ? s->dispcnt & 0x3f000000u : 0;
-                if (lastKind[n] && last[n] == s->bgcnt[n] && lastBase[n] == base && lastKind[n] == s->bgKind[n])
-                    continue;
-                last[n] = s->bgcnt[n], lastBase[n] = base, lastKind[n] = s->bgKind[n];
-                int w, h, color256, kind = s->bgKind[n];
-                u32 cb, mb;
-                bg_layout(e, n, s, &w, &h, &color256, &cb, &mb);
-                int tw = w / 8, th = h / 8;
-                snap_copy(e, mb, (u32)(tw * th) * (kind == 2 ? 1 : 2));
-                read_map(sTmpMap, sSnapGran[e], sLayers.bgMask[e], mb, tw, th, kind);
-                u32 len = ((max_tile(sTmpMap, tw * th, kind) + 1) * (color256 ? 64u : 32u) + 1023) & ~1023u;
-                snap_copy(e, cb, len);
-            }
-        }
-        memcpy(sSnapPal[e], sLayers.palette[e], 0x200);
-        sLayers.bgGran[e] = sSnapGran[e];
-        sLayers.palette[e] = sSnapPal[e];
-    }
-}
-
 static void frame_job(void *arg);
 static void *sTexture3d;
 static const uint32_t *sPicture3d;
 static int sHash = -1;
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
-    pdisp_wait(PDISP_COMP);  // (the last compositing's snapshot)
+    pdisp_wait(PDISP_COMP);  // (the last compositing's 3D picture)
     sScreenRead[0] = sScreenRead[1] = 0;
-    if (!sSnapGran[0][0])
-        for (int e = 0; e < 2; e++)
-            for (int k = 0; k < 32; k++) sSnapGran[e][k] = sSnapVram[e] + k * 0x4000;
-    snapshot();
-    static u32 frames, bytes;
-    bytes += sSnapBytes;
-    if (++frames == 300 && getenv("ACWW_FPS")) fprintf(stderr, "pica: the snapshot %lu KB a frame\n", (unsigned long)(bytes / 300 / 1024));
     sTexture3d = texture3d, sPicture3d = picture3d;
     pdisp_submit(PDISP_COMP, frame_job, 0);
 }
 
 static void frame_job(void *arg) {
     (void)arg;
+    {  // the layers the 2D renderer recorded (render.c: Gpu2dFrameInput.deferLayers)
+        HOST_PROF_ON(gPicaProf, PROF_2D);
+        gpu2d_draw_layers();
+    }
     HOST_PROF_ON(gPicaProf, PROF_COMP);
     void *texture3d = sTexture3d;
     const uint32_t *picture3d = sPicture3d;
