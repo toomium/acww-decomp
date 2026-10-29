@@ -49,6 +49,8 @@ void pdisp_quit(void) {}
 #include "gpu2d/gpu2d.h"
 #include "gpu3d/gpu3d.h"
 
+unsigned long long host_frame(void);  // (host.h, whose u32 isn't libctru's)
+
 extern const u8 pica_display_shbin[];  // (the vertex shader, pica_display.v.pica: picasso and bin2s)
 extern const u32 pica_display_shbin_size;
 
@@ -763,14 +765,47 @@ static void margins2d(int e, float x0, float y0, float sw) {
     projection(sw, 240.0f, 1);
 }
 
+// ACWW_SHOW_FPS=1: the game's frames and the pictures composited a second (over the last second, "60/30"), in the top
+// screen's top left corner: characters of 3x5 pixels (bit 14 the top left one, row by row; 0-9, then '/'), each
+// pixel 2x2, white on black
+static void show_fps(u64 gameFrame) {
+    static const u16 kChar[11] = {0x7b6f, 0x2c97, 0x73e7, 0x73cf, 0x5bc9, 0x79cf, 0x79ef, 0x7249, 0x7bef, 0x7bcf, 0x12a4};
+    static int on = -1;
+    static u32 pictures, fps, pps;
+    static u64 since, sinceFrame;
+    if (on < 0) on = getenv("ACWW_SHOW_FPS") && atoi(getenv("ACWW_SHOW_FPS"));
+    if (!on) return;
+    u64 now = osGetTime();
+    if (!since) since = now, sinceFrame = gameFrame;
+    pictures++;
+    if (now - since >= 1000) {
+        fps = (u32)((gameFrame - sinceFrame) * 1000 / (now - since)), pps = (u32)(pictures * 1000 / (now - since));
+        pictures = 0, since = now, sinceFrame = gameFrame;
+    }
+    char text[24];
+    int n = snprintf(text, sizeof text, "%lu/%lu", (unsigned long)fps, (unsigned long)pps);
+    static const float black[4] = {0, 0, 0, 1}, white[4] = {1, 1, 1, 1};
+    source(0);
+    opaque();
+    begin();
+    rect(0, 0, 4 + 8 * (float)n, 14, 0, 0, 0, TEX, black);
+    for (int i = 0; i < n; i++)
+        for (int b = 0; b < 15; b++)
+            if (kChar[text[i] == '/' ? 10 : text[i] - '0'] >> (14 - b) & 1) {
+                float x = 2 + 8 * (float)i + 2 * (float)(b % 3), y = 2 + 2 * (float)(b / 3);
+                rect(x, y, x + 2, y + 2, 0, 0, 0, TEX, white);
+            }
+    end();
+}
+
 static void frame_job(void *arg);
-static struct FrameArgs { void *texture3d; const uint32_t *picture3d; int record; } sFrameArgs[2];
+static struct FrameArgs { void *texture3d; const uint32_t *picture3d; int record; u64 gameFrame; } sFrameArgs[2];
 static int sHash = -1;
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
     pdisp_wait(PDISP_COMP, 1);  // (the arguments of the compositing before the last)
     sScreenRead[0] = sScreenRead[1] = 0;
     int record = gpu2d_record();
-    sFrameArgs[record] = (struct FrameArgs){texture3d, picture3d, record};
+    sFrameArgs[record] = (struct FrameArgs){texture3d, picture3d, record, host_frame()};
     pdisp_submit(PDISP_COMP, frame_job, &sFrameArgs[record]);
 }
 
@@ -873,6 +908,7 @@ static void frame_job(void *arg) {
         const float uv[4][2] = {{0, 1}, {pw / size, 1}, {pw / size, 1 - ph / size}, {0, 1 - ph / size}};
         quad(xy, uv, 0);
         end();
+        if (s == 0) show_fps(a->gameFrame);
     }
     GSPGPU_FlushDataCache(sV, (u32)sNV * sizeof(DVertex));
     C3D_FrameEnd(0);
