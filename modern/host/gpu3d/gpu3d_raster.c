@@ -590,6 +590,12 @@ int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback) {
 }
 void *gpu3d_wgpu_picture(void) { return g3w_picture(); }
 void g3_render(void) {
+    // the picture of the last one again: nothing it is drawn from changed (gG3Render is set at a swap, the
+    // textures change with VRAMCNT: g3_tex_setup). The game swaps every third frame.
+    static u32 drawnSwaps = ~0u, drawnGeneration = ~0u;
+    if (gG3Swaps == drawnSwaps && gG3VramGeneration == drawnGeneration && gG3VramGeneration != ~0u && !sDiag) return;
+    drawnSwaps = gG3Swaps;
+    drawnGeneration = gG3VramGeneration;
     static int timing = -1;
     uint64_t t0 = 0;
     if (timing < 0) {

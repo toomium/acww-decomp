@@ -56,6 +56,7 @@ static int sRamOverflow;
 G3RenderState gG3Render;
 const uint8_t *const *gG3Banks;
 u32 gG3VramGeneration = ~0u;
+u32 gG3Swaps;
 void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
 static int sRaster = 1;
 void gpu3d_set_raster(int on) { sRaster = on; }
@@ -1107,6 +1108,7 @@ static void do_swap(void) {
     sNumPolys = sNumVerts = sNumOpaque = 0;
     sStripValid = 0;
     sFlushPending = 0;
+    gG3Swaps++;
 }
 
 // ---- the interface

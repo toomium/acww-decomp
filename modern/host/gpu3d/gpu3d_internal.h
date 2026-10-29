@@ -67,6 +67,7 @@ extern const uint8_t *const *gG3Banks;  // VRAM banks A-I (gpu3d_frame)
 extern u8 gG3VramCnt[9];
 extern int gG3Diagnostics;  // (gpu3d_set_diagnostics: the comparisons' reports want more kept)
 extern u32 gG3VramGeneration;  // (gpu3d_vram_generation)
+extern u32 gG3Swaps;  // SWAP_BUFFERS done: gG3Render is set then
 
 // gpu3d_raster.c
 void g3_render(void);                    // gG3Render into the frame buffer
