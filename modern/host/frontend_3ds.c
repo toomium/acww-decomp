@@ -127,10 +127,12 @@ void frontend_backend_frame(AcwwShm *shm) {
     if (k & KEY_CPAD_UP) keys |= KEY_DUP;
     if (k & KEY_CPAD_DOWN) keys |= KEY_DDOWN;
     shm->keys = keys;
-    // the bottom screen's 320x240 to the DS's 256x192 in its middle; a touch outside it is none
+    // the bottom screen's 320x240 to the DS's 256x192: all of it when the GPU shows it scaled, else its middle (a
+    // touch outside it is none)
     touchPosition t;
     hidTouchRead(&t);
-    int tx = t.px - 32, ty = t.py - 24;
+    int scaled = render_presenting() && pdisp_scaled();
+    int tx = scaled ? t.px * 4 / 5 : t.px - 32, ty = scaled ? t.py * 4 / 5 : t.py - 24;
     shm->touch_down = (k & KEY_TOUCH) && tx >= 0 && tx < 256 && ty >= 0 && ty < 192;
     if (shm->touch_down) shm->touch_x = tx, shm->touch_y = ty;
     if (!render_presenting()) {  // (else the GPU has shown them: pica_display.c)

@@ -26,6 +26,7 @@
 
 int pdisp_init(void) { return 0; }
 void pdisp_attach_screens(void) {}
+int pdisp_scaled(void) { return 0; }
 struct Gpu2dLayers *pdisp_layers(void) { return 0; }
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
@@ -48,7 +49,7 @@ void pdisp_idle(void) {}
 extern const u8 pica_display_shbin[];  // (the vertex shader, pica_display.v.pica: picasso and bin2s)
 extern const u32 pica_display_shbin_size;
 
-enum { W = 256, H = 192, TEX = 256, MAX_VERTS = 0x8000 };
+enum { W = 256, H = 192, TEX = 256, UP = 512, MAX_VERTS = 0x8000 };
 
 typedef struct {
     float pos[3];  // pixels
@@ -69,6 +70,8 @@ static C3D_Tex *s3dTex;                // this frame's 3D picture: the GPU's (pr
 static int s3dPremultiplied;
 static C3D_Tex sComp[2];               // each engine's picture
 static C3D_RenderTarget *sCompTarget[2], *sScreen[2];
+static C3D_Tex sUp;                    // a picture doubled (the screens' sharp scaling; RGB8, VRAM)
+static C3D_RenderTarget *sUpTarget;
 static u32 *sReadback;
 static uint32_t sScreenPx[2][W * H];
 static int sScreenRead[2];
@@ -204,17 +207,28 @@ int pdisp_init(void) {
     return 1;
 }
 
+// ACWW_3DS_SCALE=1: the screens 1:1 (256x192) instead of 1.25 times (320x240)
+int pdisp_scaled(void) {
+    static int scaled = -1;
+    if (scaled < 0) scaled = !(getenv("ACWW_3DS_SCALE") && atoi(getenv("ACWW_3DS_SCALE")) == 1);
+    return scaled;
+}
+
 void pdisp_attach_screens(void) {
     if (!sV || sScreen[0]) return;
     const u32 out = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
                     GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) |
                     GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
+    if (pdisp_scaled() && C3D_TexInitVRAM(&sUp, UP, UP, GPU_RGB8)) {  // (render targets are in VRAM: 768 KB)
+        C3D_TexSetFilter(&sUp, GPU_LINEAR, GPU_LINEAR);
+        sUpTarget = C3D_RenderTargetCreateFromTex(&sUp, GPU_TEXFACE_2D, 0, -1);
+    }
     sScreen[0] = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, -1);
     sScreen[1] = C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, -1);
     if (sScreen[0]) C3D_RenderTargetSetOutput(sScreen[0], GFX_TOP, GFX_LEFT, out);
     if (sScreen[1]) C3D_RenderTargetSetOutput(sScreen[1], GFX_BOTTOM, GFX_LEFT, out);
-    fprintf(stderr, "pica: %lu KB of VRAM free%s\n", (unsigned long)(vramSpaceFree() / 1024),
-            sScreen[0] && sScreen[1] ? "" : " (no screen targets)");
+    fprintf(stderr, "pica: %lu KB of VRAM free%s%s\n", (unsigned long)(vramSpaceFree() / 1024),
+            sScreen[0] && sScreen[1] ? "" : " (no screen targets)", pdisp_scaled() && !sUpTarget ? " (not scaled: no VRAM)" : "");
 }
 
 struct Gpu2dLayers *pdisp_layers(void) { return sV ? &sLayers : 0; }
@@ -712,19 +726,37 @@ static void frame_job(void *arg) {
         }
         group(&g);
     }
-    // to the screens, 1:1 in their middle
+    // to the screens: 1.25 times, 320x240 (pdisp_scaled), "sharp bilinear": the picture doubled pixel by pixel, then
+    // reduced with the linear filter (the DS's pixels stay square and sharp, only their edges are smoothed); else 1:1.
+    // In their middle.
     C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
     C3D_AlphaTest(false, GPU_ALWAYS, 0);
     opaque();
     for (int s = 0; s < 2 && sScreen[0]; s++) {
         int e = s == 0 ? sLayers.topEngine : 1 - sLayers.topEngine;
-        float sw = s == 0 ? 400.0f : 320.0f, x0 = (sw - W) / 2, y0 = (240 - H) / 2;
+        float sw = s == 0 ? 400.0f : 320.0f;
+        C3D_Tex *pic = &sComp[e];
+        float pw = W, ph = H, size = TEX;
+        if (sUpTarget) {
+            C3D_FrameDrawOn(sUpTarget);
+            projection(UP, UP, 0);
+            source(&sComp[e]);
+            begin();
+            const float xy[4][2] = {{0, 0}, {2 * W, 0}, {2 * W, 2 * H}, {0, 2 * H}};
+            const float uv[4][2] = {{0, 1}, {(float)W / TEX, 1}, {(float)W / TEX, 1 - (float)H / TEX}, {0, 1 - (float)H / TEX}};
+            quad(xy, uv, 0);
+            end();
+            pic = &sUp, pw = 2 * W, ph = 2 * H, size = UP;
+        }
+        float dw = sUpTarget ? 320.0f : W, dh = sUpTarget ? 240.0f : H, x0 = (sw - dw) / 2, y0 = (240 - dh) / 2;
         C3D_RenderTargetClear(sScreen[s], C3D_CLEAR_ALL, 0x000000ff, 0);
         C3D_FrameDrawOn(sScreen[s]);
         projection(sw, 240.0f, 1);
-        source(&sComp[e]);
+        source(pic);
         begin();
-        rect(x0, y0, x0 + W, y0 + H, 0, (float)W / TEX, 0, TEX, 0);
+        const float xy[4][2] = {{x0, y0}, {x0 + dw, y0}, {x0 + dw, y0 + dh}, {x0, y0 + dh}};
+        const float uv[4][2] = {{0, 1}, {pw / size, 1}, {pw / size, 1 - ph / size}, {0, 1 - ph / size}};
+        quad(xy, uv, 0);
         end();
     }
     GSPGPU_FlushDataCache(sV, (u32)sNV * sizeof(DVertex));
