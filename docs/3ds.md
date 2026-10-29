@@ -523,3 +523,9 @@ the exheader can enable core 2 on the New 3DS (1.3).
   line, and a new palette version was kept and 4 KB compared a line) and waited 0.9 ms for the GPU thread (its
   compositing job, now with the 2D layers, was sometimes not done after short frames). Then: only the changed words
   kept; two records in turn, the game's thread waits only for the compositing before the last. Exact in Azahar.
+- 2026-10-29: on hardware with the 2D record's fixes: 39-45 frames a second, the register time 3-10 ms and the slow
+  stretches exactly those with much of it; the ARM7's side (now its own part) 0. Samples in Azahar in the town (the
+  save script; its ACWW_KEYS was read again every frame, about 45 % of the samples: read once now, the PC's 20000
+  frames 12.5 -> 10.4 s): the geometry engine about 47 % with its copies, VRAM's remapping about 10 % (inside
+  register writes: every VRAMCNT change moved megabytes, several changes a frame while textures load). Now only the
+  granules whose bank changes move; a new polygon is zeroed without its diagnostics copy. Exact.
