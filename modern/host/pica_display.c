@@ -163,6 +163,7 @@ int pdisp_init(void) {
     if (sV) return 1;
     gspInit();  // (counted, as gpu3d_pica.c: C3D_Init there, or here first)
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE * 4);
+    sLayers.tiled = 1;
     sV = linearAlloc(MAX_VERTS * sizeof(DVertex));
     sReadback = linearAlloc(TEX * TEX * 4);
     s3dStage = linearAlloc(W * H * 4);
@@ -173,9 +174,11 @@ int pdisp_init(void) {
     sUProjection = shaderInstanceGetUniformLocation(sProgram.vertexShader, "projection");
     for (int e = 0; e < 2; e++) {
         for (int n = 0; n < 4; n++)
-            if (!(sLayers.bg[e][n] = linearAlloc(W * H * 2)) || !tex(&sBg[e][n], GPU_RGBA5551)) return 0;
-        if (!(sLayers.obj[e] = linearAlloc(W * H * 4)) || !tex(&sObj[e], GPU_RGBA8)) return 0;
-        if (!(sLayers.region[e] = linearAlloc(W * H * 4)) || !tex(&sRegion[e], GPU_RGBA8)) return 0;
+            if (!tex(&sBg[e][n], GPU_RGBA5551)) return 0;
+            else sLayers.bg[e][n] = sBg[e][n].data;
+        if (!tex(&sObj[e], GPU_RGBA8) || !tex(&sRegion[e], GPU_RGBA8)) return 0;
+        sLayers.obj[e] = sObj[e].data;  // (the 2D renderer writes the textures: Gpu2dLayers.tiled)
+        sLayers.region[e] = sRegion[e].data;
         if (!C3D_TexInitVRAM(&sComp[e], TEX, TEX, GPU_RGBA8)) return 0;
         C3D_TexSetFilter(&sComp[e], GPU_NEAREST, GPU_NEAREST);
         sCompTarget[e] = C3D_RenderTargetCreateFromTex(&sComp[e], GPU_TEXFACE_2D, 0, GPU_RB_DEPTH24_STENCIL8);
@@ -618,7 +621,11 @@ void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
 
 static void frame_job(void *arg) {
     const struct FrameArgs *a = arg;
-    {  // the layers the 2D renderer recorded (render.c: Gpu2dFrameInput.deferLayers)
+    {
+        HOST_PROF_ON(gPicaProf, PROF_GPU);
+        C3D_FrameBegin(0);  // (waits for the GPU's work before: it may still read the layers' textures)
+    }
+    {  // the layers the 2D renderer recorded (render.c: Gpu2dFrameInput.deferLayers), into their textures
         HOST_PROF_ON(gPicaProf, PROF_2D);
         gpu2d_draw_layers(a->record);
     }
@@ -632,21 +639,17 @@ static void frame_job(void *arg) {
         for (int y = 0; y < 8; y++)
             for (int x = 0; x < 8; x++)
                 sMorton[y][x] = (u8)((x & 1) | (y & 1) << 1 | (x & 2) << 1 | (y & 2) << 2 | (x & 4) << 2 | (y & 4) << 3);
-    // the layers the CPU drew this frame, to the GPU's textures; the 3D picture as RGBA8 (its colour straight)
+    // the layers the CPU drew this frame, written into the GPU's textures, from the cache; the 3D picture as RGBA8
+    // (its colour straight)
     u32 used[2] = {0, 0}, cpuBg[2] = {0, 0};
     for (int e = 0; e < 2; e++)
         for (int y = 0; y < H; y++)
             if (!sLayers.line[e][y].white) used[e] |= sLayers.line[e][y].dispcnt, cpuBg[e] |= ~sLayers.line[e][y].gpuBg & 15u;
-    {
-        HOST_PROF_ON(gPicaProf, PROF_GPU);
-        C3D_FrameBegin(0);  // (waits for the GPU's work before)
-    }
     for (int e = 0; e < 2; e++) {
         for (int n = 0; n < 4; n++)
-            if ((used[e] & 0x100u << n) && (cpuBg[e] >> n & 1))
-                upload(sLayers.bg[e][n], &sBg[e][n], W * H * 2, GX_TRANSFER_FMT_RGB5A1);
-        if (used[e] & 0x1000) upload(sLayers.obj[e], &sObj[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
-        if (used[e] & 0xe000) upload(sLayers.region[e], &sRegion[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
+            if ((used[e] & 0x100u << n) && (cpuBg[e] >> n & 1)) GSPGPU_FlushDataCache(sBg[e][n].data, TEX * H * 2);
+        if (used[e] & 0x1000) GSPGPU_FlushDataCache(sObj[e].data, TEX * H * 4);
+        if (used[e] & 0xe000) GSPGPU_FlushDataCache(sRegion[e].data, TEX * H * 4);
     }
     if (!texture3d && picture3d && (used[0] & 8)) {
         static u32 a8[32];
