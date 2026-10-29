@@ -660,7 +660,7 @@ static void submit_polygon(void) {
         return;
     }
     G3Polygon *poly = &sPolyRam[sBank][sNumPolys];
-    memset(poly, 0, sizeof *poly);
+    memset(poly, 0, offsetof(G3Polygon, orig));  // (orig, the diagnostics' copy, is read only up to norig)
     poly->index = sNumPolys;
     G3Vertex *ram = sVertexRam[sBank];
     if (phantom) {  // (the two in the order the polygon has them: odd triangles newer first)
