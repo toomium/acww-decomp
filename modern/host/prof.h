@@ -8,6 +8,7 @@
 enum {
     PROF_GAME, PROF_REGS, PROF_DMA, PROF_GEOM, PROF_2D, PROF_3D, PROF_COMP, PROF_SOUND, PROF_FRONT, PROF_PACE,
     PROF_GPU,  // waiting for the GPU (the 3DS)
+    PROF_LIGHT, PROF_VERTEX,  // the geometry engine's lighting, and its vertices and polygons (setup, clipping)
     PROF_N
 };
 extern volatile int gHostProf;

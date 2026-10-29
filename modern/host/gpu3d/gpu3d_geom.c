@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "gpu3d_internal.h"
+#include "../prof.h"
 
 // ---- state
 static int sGeomOn, sRenderOn;          // POWCNT1 bits 3 and 2
@@ -775,6 +776,7 @@ static void submit_polygon(void) {
 
 static void submit_vertex(void) {
     if (!sInBegin) return;
+    HOST_PROF(PROF_VERTEX);
     update_clip();
     G3Vertex *v = &sTemp[sVtxInPoly];
     s64 x = sVtx[0], y = sVtx[1], z = sVtx[2];
@@ -944,7 +946,10 @@ static void execute(u8 cmd, const u32 *p) {
                 sTexCoord[i] = (s16)((((s64)sNormal[0] * sTex.m[i] + (s64)sNormal[1] * sTex.m[4 + i] +
                                        (s64)sNormal[2] * sTex.m[8 + i]) >> 24) + sTexRaw[i]);
         }
-        lighting();
+        {
+            HOST_PROF(PROF_LIGHT);
+            lighting();
+        }
         break;
     case 0x22:
         sTexRaw[0] = (s16)p[0];
