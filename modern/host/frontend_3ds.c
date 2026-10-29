@@ -127,6 +127,9 @@ void frontend_backend_frame(AcwwShm *shm) {
     if (k & KEY_CPAD_UP) keys |= KEY_DUP;
     if (k & KEY_CPAD_DOWN) keys |= KEY_DDOWN;
     shm->keys = keys;
+    circlePosition cp;
+    hidCircleRead(&cp);
+    shm->stick_x = cp.dx, shm->stick_y = cp.dy;
     // the bottom screen's 320x240 to the DS's 256x192: all of it when the GPU shows it scaled, else its middle (a
     // touch outside it is none)
     touchPosition t;

@@ -4,6 +4,7 @@
 // device, input only from ACWW_KEYS / ACWW_TOUCH.
 
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +23,18 @@ void frontend_init(const char *argv0) {
 }
 
 AcwwShm *frontend_shm(void) { return sShm; }
+
+// the circle pad for the game (include/host_input.h): its angle and tilt while it holds a direction down
+volatile short gHostStickAngle;
+volatile unsigned short gHostStickTilt;
+static void stick(const AcwwShm *shm, u32 keys) {
+    static int on = -1;
+    if (on < 0) on = !getenv("ACWW_ANALOG") || atoi(getenv("ACWW_ANALOG"));
+    float x = shm->stick_x, y = shm->stick_y, r = sqrtf(x * x + y * y);
+    if (!on || !(keys & 0xf0) || r < 20) { gHostStickTilt = 0; return; }
+    gHostStickAngle = (short)lrintf(atan2f(x, -y) * (32768.0f / 3.14159265f));  // (0 down, 0x4000 right)
+    gHostStickTilt = (unsigned short)(r >= 150 ? 0x1000 : r * 0x1000 / 150);
+}
 
 // scripted keys for headless runs: ACWW_KEYS="frame:frames:mask;..." (mask: the bits of AcwwShm.keys, hex)
 // (ACWW_KEYS read once: an input script is several KB, and reading it again every frame took much of a run's time)
@@ -67,6 +80,7 @@ void frontend_frame(void) {
         if (sShm->quit) host_quit();
         u32 k = sShm->keys;
         keyinput = (u16)(~k & 0x3ff);
+        stick(sShm, k);
         xy = (u16)(0x2000 | (~k & 0x0c00));
     }
     u32 sk = scripted_keys();
