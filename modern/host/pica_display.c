@@ -72,6 +72,7 @@ static int s3dPremultiplied;
 static int s3dWide;                    // this frame's 3D picture: the wide view's (gpu3d.h)
 static C3D_Tex sComp[2];               // each engine's picture
 static C3D_RenderTarget *sCompTarget[2], *sScreen[2];
+static int sScreenStencil;             // the screens' targets have a stencil buffer (the wide view's)
 static C3D_Tex sUp;                    // a picture doubled (the screens' sharp scaling; RGB8, VRAM)
 static C3D_RenderTarget *sUpTarget;
 static u32 *sReadback;
@@ -226,8 +227,9 @@ void pdisp_attach_screens(void) {
         C3D_TexSetFilter(&sUp, GPU_LINEAR, GPU_LINEAR);
         sUpTarget = C3D_RenderTargetCreateFromTex(&sUp, GPU_TEXFACE_2D, 0, -1);
     }
-    sScreen[0] = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, -1);
-    sScreen[1] = C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, -1);
+    sScreenStencil = gpu3d_wide_wanted();  // (margins2d)
+    sScreen[0] = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, sScreenStencil ? GPU_RB_DEPTH24_STENCIL8 : -1);
+    sScreen[1] = C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, sScreenStencil ? GPU_RB_DEPTH24_STENCIL8 : -1);
     if (sScreen[0]) C3D_RenderTargetSetOutput(sScreen[0], GFX_TOP, GFX_LEFT, out);
     if (sScreen[1]) C3D_RenderTargetSetOutput(sScreen[1], GFX_BOTTOM, GFX_LEFT, out);
     fprintf(stderr, "pica: %lu KB of VRAM free%s%s\n", (unsigned long)(vramSpaceFree() / 1024),
@@ -446,6 +448,15 @@ typedef struct {
     int y0[MAX_PIECES], y1[MAX_PIECES];
 } Group;
 static const Gpu2dLineState *piece_state(const Group *g, int i) { return &sLayers.line[g->engine][g->y0[i]]; }
+// The wide view's 2D margins (margins2d): the groups drawn again over [sX0, sX1), the first and last lines sY lines
+// further out, with only what goes on beyond the DS's screen (the backdrop, the affine BGs that wrap, the effects)
+static int sMargin;
+static float sX0 = 0, sX1 = W, sY = 0;
+static float piece_y0(const Group *g, int i) { return g->y0[i] == 0 ? 0.0f - sY : (float)g->y0[i]; }
+static float piece_y1(const Group *g, int i) { return g->y1[i] == H ? H + sY : (float)g->y1[i]; }
+static int affine_wraps(const Gpu2dLineState *s, int l) {
+    return l >= 2 && l < 4 && (s->gpuBg >> l & 1) && s->bgKind[l] == 2 && (s->bgcnt[l] & 0x2000);
+}
 
 // a layer's texture and its wrapping for the group (0: none)
 static BgTex *layer_bind(const Group *g, int l, int is3d) {
@@ -483,7 +494,8 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
     // piece's first line's reference point; the corners half a pixel out, so that the pixels' centres sample those
     const int16_t *a = s->affine[l - 2];
     const int32_t *rf = &sLayers.ref[g->engine][g->y0[i]][2 * (l - 2)];
-    const float xy[4][2] = {{0, y0}, {W, y0}, {W, y1}, {0, y1}};
+    float d0 = piece_y0(g, i), d1 = piece_y1(g, i);
+    const float xy[4][2] = {{sX0, d0}, {sX1, d0}, {sX1, d1}, {sX0, d1}};
     float uv[4][2];
     for (int k = 0; k < 4; k++) {
         float px = xy[k][0] - 0.5f, py = xy[k][1] - 0.5f - y0;
@@ -550,24 +562,26 @@ static void group(const Group *g) {
     if (s->white) {
         C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
         begin();
-        for (int i = 0; i < g->n; i++) rect(0, (float)g->y0[i], W, (float)g->y1[i], 0, 0, 0, TEX, white);
+        for (int i = 0; i < g->n; i++) rect(sX0, piece_y0(g, i), sX1, piece_y1(g, i), 0, 0, 0, TEX, white);
         end();
         return;
     }
     u32 bld = s->bldcnt, effect = bld >> 6 & 3, dispcnt = s->dispcnt;
     int is3d = g->engine == 0 && (dispcnt & 8), windows = (dispcnt & 0xe000) != 0;
-    // the backdrop: 1st / 2nd target as BLDCNT bits 5 and 13; the effects allowed, no window, nothing marked
-    stencil(GPU_ALWAYS, (bld >> 13 & 1) | (bld >> 5 & 1) << 1, 0, 0xff);
-    begin();
-    for (int i = 0; i < g->n; i++) {
-        bgr555(piece_state(g, i)->backdrop, 1, col);
-        rect(0, (float)g->y0[i], W, (float)g->y1[i], 0, 0, 0, TEX, col);
-    }
-    end();
     // the windows: each pixel's region (bits 3-4) and whether it allows the effects (bit 2); the layers each region
     // shows (outside, window 0, window 1, the OBJ window: WINOUT, WININ, WININ high, WINOUT high)
     u8 shows[4] = {(u8)(s->winout & 0x3f), (u8)(s->winin & 0x3f), (u8)(s->winin >> 8 & 0x3f), (u8)(s->winout >> 8 & 0x3f)};
-    if (windows) {
+    // the backdrop: 1st / 2nd target as BLDCNT bits 5 and 13; the effects allowed, no window, nothing marked (the
+    // margins: outside the windows)
+    u32 outside = sMargin && windows && !(shows[0] & 0x20) ? 4 : 0;
+    stencil(GPU_ALWAYS, (bld >> 13 & 1) | (bld >> 5 & 1) << 1 | outside, 0, 0xff);
+    begin();
+    for (int i = 0; i < g->n; i++) {
+        bgr555(piece_state(g, i)->backdrop, 1, col);
+        rect(sX0, piece_y0(g, i), sX1, piece_y1(g, i), 0, 0, 0, TEX, col);
+    }
+    end();
+    if (windows && !sMargin) {
         colour_writes(0);
         source(&sRegion[g->engine]);
         for (u32 k = 0; k < 4; k++) {
@@ -585,6 +599,10 @@ static void group(const Group *g) {
             int l = n == 4 ? 4 : 3 - n;
             if (l < 4 && (!(dispcnt & 0x100u << l) || s->prio[l] != p)) continue;
             if (l == 4 && !(dispcnt & 0x1000)) continue;
+            if (sMargin) {
+                if (affine_wraps(s, l) && (!windows || shows[0] >> l & 1)) layer(g, l, p, is3d, 0, 0);
+                continue;
+            }
             // (the layers the CPU drew have the windows applied; the GPU's BGs and the 3D layer are drawn per region)
             int perRegion = windows && l < 4 && ((s->gpuBg >> l & 1) || (l == 0 && is3d));
             if (!perRegion) { layer(g, l, p, is3d, 0, 0); continue; }
@@ -601,7 +619,7 @@ static void group(const Group *g) {
         for (int i = 0; i < g->n; i++) {
             u32 evy = piece_state(g, i)->bldy & 31;
             float c = effect == 2 ? 1.0f : 0.0f, f[4] = {c, c, c, (float)(evy > 16 ? 16 : evy) / 16.0f};
-            if (evy) rect(0, (float)g->y0[i], W, (float)g->y1[i], 0, 0, 0, TEX, f);
+            if (evy) rect(sX0, piece_y0(g, i), sX1, piece_y1(g, i), 0, 0, 0, TEX, f);
         }
         end();
     }
@@ -611,7 +629,7 @@ static void group(const Group *g) {
     for (int i = 0; i < g->n; i++) {
         u32 mb = piece_state(g, i)->masterBright, mode = mb >> 14, k = mb & 31;
         float c = mode == 1 ? 1.0f : 0.0f, f[4] = {c, c, c, (float)(k > 16 ? 16 : k) / 16.0f};
-        if ((mode == 1 || mode == 2) && k) rect(0, (float)g->y0[i], W, (float)g->y1[i], 0, 0, 0, TEX, f);
+        if ((mode == 1 || mode == 2) && k) rect(sX0, piece_y0(g, i), sX1, piece_y1(g, i), 0, 0, 0, TEX, f);
     }
     end();
 }
@@ -674,6 +692,34 @@ static void margins(float x0, float y0) {
         rect(x0 - k, y0 - l, x0 + W + k, y0 + H + l, 0, 0, 0, TEX, q);
         end();
     }
+}
+
+// an engine's picture, group by group of lines with the same GPU state, in pieces of lines with the same state
+static void compose(int e) {
+    static Group g;
+    g.engine = e, g.n = 0, g.s = &sLayers.line[e][0];
+    for (int y0 = 0, y1; y0 < H; y0 = y1) {
+        for (y1 = y0 + 1; y1 < H && same_run(e, y1 - 1); y1++) {}
+        if (g.n && !same_gpu_state(g.s, &sLayers.line[e][y0])) {
+            group(&g);
+            g.n = 0, g.s = &sLayers.line[e][y0];
+        }
+        g.y0[g.n] = y0, g.y1[g.n] = y1, g.n++;
+    }
+    group(&g);
+}
+
+// The wide view: around engine e's picture at (x0, y0) on a screen sw wide (one with a stencil buffer), the engine's
+// lines drawn on beyond the DS's screen as far as they can be: the backdrop, the affine BGs that wrap (the town's
+// sky: its clouds), the effects; the lines above and below as the first and last one
+static void margins2d(int e, float x0, float y0, float sw) {
+    C3D_Mtx m;
+    Mtx_OrthoTilt(&m, -x0, sw - x0, 240.0f - y0, -y0, 0.0f, 1.0f, true);  // (the DS's pixels, as projection's)
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, sUProjection, &m);
+    sMargin = 1, sX0 = -x0, sX1 = sw - x0, sY = y0;
+    compose(e);
+    sMargin = 0, sX0 = 0, sX1 = W, sY = 0;
+    projection(sw, 240.0f, 1);
 }
 
 static void frame_job(void *arg);
@@ -744,23 +790,12 @@ static void frame_job(void *arg) {
     C3D_CullFace(GPU_CULL_NONE);
     for (int i = 1; i < 6; i++) C3D_TexEnvInit(C3D_GetTexEnv(i));
     C3D_DepthMap(true, -1.0f, 0.0f);
-    // each engine's picture, group by group of lines with the same GPU state, in pieces of lines with the same state
     for (int e = 0; e < 2; e++) {
         C3D_RenderTargetClear(sCompTarget[e], C3D_CLEAR_ALL, 0, 0);
         C3D_FrameDrawOn(sCompTarget[e]);
         colour_writes(1);
         projection(TEX, TEX, 0);
-        static Group g;
-        g.engine = e, g.n = 0, g.s = &sLayers.line[e][0];
-        for (int y0 = 0, y1; y0 < H; y0 = y1) {
-            for (y1 = y0 + 1; y1 < H && same_run(e, y1 - 1); y1++) {}
-            if (g.n && !same_gpu_state(g.s, &sLayers.line[e][y0])) {
-                group(&g);
-                g.n = 0, g.s = &sLayers.line[e][y0];
-            }
-            g.y0[g.n] = y0, g.y1[g.n] = y1, g.n++;
-        }
-        group(&g);
+        compose(e);
     }
     // to the screens: 1.25 times, 320x240 (pdisp_scaled), "sharp bilinear": the picture doubled pixel by pixel, then
     // reduced with the linear filter (the DS's pixels stay square and sharp, only their edges are smoothed); else 1:1.
@@ -789,6 +824,7 @@ static void frame_job(void *arg) {
         C3D_FrameDrawOn(sScreen[s]);
         projection(sw, 240.0f, 1);
         if (s3dWide && e == 0 && (used[0] & 8)) margins(x0, y0);
+        else if (sScreenStencil) margins2d(e, x0, y0, sw);
         source(pic);
         opaque();
         begin();
