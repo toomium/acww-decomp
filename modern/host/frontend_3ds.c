@@ -31,6 +31,7 @@ static void open_audio(void) {
     sWaveData = linearAlloc(WAVE_BUFS * WAVE_FRAMES * 4);
     if (!sWaveData) { ndspExit(); return; }
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
+    ndspSetClippingMode(NDSP_CLIP_NORMAL);  // (libctru's default, soft, squeezes the DS mixer's loud peaks: distortion)
     ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
     ndspChnSetRate(0, ACWW_AUDIO_RATE);
     ndspChnSetFormat(0, NDSP_FORMAT_STEREO_PCM16);
