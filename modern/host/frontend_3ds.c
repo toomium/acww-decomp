@@ -36,6 +36,10 @@ static void open_audio(void) {
     ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
     ndspChnSetRate(0, ACWW_AUDIO_RATE);
     ndspChnSetFormat(0, NDSP_FORMAT_STEREO_PCM16);
+    // ACWW_VOLUME=<percent> (default 100): the speakers may distort loud deep notes that headphones play cleanly
+    float mix[12] = {0}, vol = getenv("ACWW_VOLUME") ? atoi(getenv("ACWW_VOLUME")) / 100.0f : 1.0f;
+    mix[0] = mix[1] = vol;
+    ndspChnSetMix(0, mix);
     for (int i = 0; i < WAVE_BUFS; i++) {
         sWave[i].data_pcm16 = sWaveData + i * WAVE_FRAMES * 2;
         sWave[i].status = NDSP_WBUF_DONE;  // (free to be filled)
