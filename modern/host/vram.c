@@ -114,24 +114,36 @@ void host_vram_flush(void) {
 static u32 sGeneration;
 u32 host_vram_generation(void) { return sGeneration; }
 
+// Only the granules whose bank changes: their old bank gets the window's contents, then they get the new one's (or
+// zeros). A granule that keeps its bank would get back what it holds. (So a write the game makes where no bank
+// shows stays until a bank shows there, not until the next VRAMCNT change; neither happens on the DS, where it is
+// lost. Remapping everything moved megabytes at each change, several a frame when the game loads textures.)
 static void remap(void) {
     sGeneration++;
-    host_vram_flush();
-    for (int g = 0; g < NGRAN; g++) sGran[g].bank = -1;
+    static struct { s32 bank; u32 off; } now[NGRAN];
+    static int first = 1;
+    for (int g = 0; g < NGRAN; g++) now[g].bank = -1, now[g].off = 0;
     for (int i = 0; i < 9; i++) {
         u32 a = bank_address(i, sCnt[i]);
         if (!a) continue;
         for (u32 off = 0; off < kSize[i]; off += GRANULE) {
             int g = granule(a + off);
             if (g < 0) { fprintf(stderr, "vram: bank %c at %08x outside the windows\n", 'A' + i, a + off); continue; }
-            sGran[g].bank = i;
-            sGran[g].off = off;
+            now[g].bank = i;
+            now[g].off = off;
         }
     }
+    for (int g = 0; g < NGRAN; g++)
+        if (sGran[g].bank >= 0 && (sGran[g].bank != now[g].bank || sGran[g].off != now[g].off))
+            memcpy(sBanks + sOffset[sGran[g].bank] + sGran[g].off, sGran[g].win, GRANULE);
     for (int g = 0; g < NGRAN; g++) {
-        if (sGran[g].bank >= 0) memcpy(sGran[g].win, sBanks + sOffset[sGran[g].bank] + sGran[g].off, GRANULE);
+        if (!first && sGran[g].bank == now[g].bank && sGran[g].off == now[g].off) continue;
+        sGran[g].bank = now[g].bank;
+        sGran[g].off = now[g].off;
+        if (now[g].bank >= 0) memcpy(sGran[g].win, sBanks + sOffset[now[g].bank] + now[g].off, GRANULE);
         else memset(sGran[g].win, 0, GRANULE);
     }
+    first = 0;
 }
 
 // VRAMCNT_A..I: 0x04000240-0x04000246, 0x04000248-0x04000249 (0x04000247 is WRAMCNT)
@@ -163,6 +175,6 @@ void host_vram_init(void) {
     for (int i = 0; i < 9; i++) { sOffset[i] = total; total += kSize[i]; }
     int g = 0;
     for (unsigned w = 0; w < NWIN; w++)
-        for (u32 off = 0; off < kWindows[w].size; off += GRANULE, g++) sGran[g].win = sWinMem[w] + off;
+        for (u32 off = 0; off < kWindows[w].size; off += GRANULE, g++) sGran[g].win = sWinMem[w] + off, sGran[g].bank = -1;
     remap();
 }
