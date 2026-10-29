@@ -555,3 +555,9 @@ the exheader can enable core 2 on the New 3DS (1.3).
   benchmark the name entry about 60 frames a second (was 56), the intro 69-80 (63-71), the town 69-81 (62-72). The
   benchmark's start (frames 360-2640, 47-52) is bound by core 0: the geometry engine about 8.5 ms a frame there.
   Next: the geometry engine; the BG textures (also in linear memory) to VRAM; the OBJs on the GPU.
+- 2026-10-29: the cursor behind the "New game" menu (the user saw it): the compositing drew a priority's layers in
+  the wrong order (the OBJs first, BG0-3 over them), so an OBJ was behind a BG of its own priority; fixed (the CPU
+  renderer's picture at frame 2480 of the save script). The geometry engine in the title's 3D (samples in Azahar):
+  about half of it is the command path, a word at a time; the runtime at -O3 without frame pointers on the 3DS
+  (Azahar: the geometry engine 13.9 -> 11.6 ms, the game's core 24.6 -> 23.4), a strip's shared vertices turned
+  instead of copied (vertices 4.5 -> 3.9). All exact.
