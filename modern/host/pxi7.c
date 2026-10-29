@@ -114,7 +114,7 @@ static u8 sNvStatus;  // bit 1: write enable latch
 // Firmware Header", "DS Firmware User Settings") says is read - the user settings' place in the header, and the user
 // settings twice (as after a first start: owner "PLAYER", English, a birthday of 1 January, the touch screen
 // calibration of a typical unit), each with its CRC. The game reads the header and the Wi-Fi settings (left erased:
-// no access point set up); the runtime the calibration (tp_raw).
+// no access point set up); the game and the runtime the calibration (user_settings, tp_raw).
 static u16 fw_crc16(u16 crc, const u8 *p, u32 n) {
     for (u32 i = 0; i < n; i++) {
         crc ^= p[i];
@@ -147,6 +147,22 @@ static void default_firmware(void) {
         u[0x72] = (u8)crc, u[0x73] = (u8)(crc >> 8);
     }
     sNvramSize = SIZE;
+}
+
+// the user settings where the DS's boot firmware leaves them for the game (HW_NVRAM_USER_INFO, 0x027ffc80: the
+// touch calibration of TP_GetUserInfo, OS_GetOwnerInfo): the newer of the two copies with a right CRC. Without them
+// the game's calibration is 0 and every touch is at 0,0. (0x70 bytes, as the DS: the MAC address after them is
+// wm7.c's.)
+static void user_settings(void) {
+    u32 at = (sNvram[0x20] | sNvram[0x21] << 8) * 8;
+    if (at + 0x200 > sNvramSize) return;
+    const u8 *pick = 0;
+    for (int copy = 0; copy < 2; copy++) {
+        const u8 *u = sNvram + at + copy * 0x100;
+        if (fw_crc16(0xffff, u, 0x70) != (u16)(u[0x72] | u[0x73] << 8)) continue;
+        if (!pick || ((u[0x70] - pick[0x70]) & 0x7f) == 1) pick = u;  // (the update counter, mod 0x80)
+    }
+    if (pick) memcpy(gHostSysWork.nvramUserInfo, pick, 0x70);
 }
 
 static void nvram_command(void) {
@@ -343,9 +359,9 @@ static struct TouchScript sTouch[64];
 static int sTouchCount;
 
 int frontend_touch(int *x, int *y);
-// a screen position as the raw ADC sample, through the firmware's calibration points
+// a screen position as the raw ADC sample, through the calibration points the game reads too (TP_GetUserInfo)
 static u32 tp_raw(s32 sx, s32 sy) {
-    const u8 *u = sNvram + (sNvramSize ? (sNvram[0x20] | sNvram[0x21] << 8) * 8 : 0) + 0x58;
+    const u8 *u = gHostSysWork.nvramUserInfo + 0x58;
     s32 ax1 = u[0] | u[1] << 8, ay1 = u[2] | u[3] << 8, sx1 = u[4], sy1 = u[5];
     s32 ax2 = u[6] | u[7] << 8, ay2 = u[8] | u[9] << 8, sx2 = u[10], sy2 = u[11];
     s32 x = sx2 != sx1 ? ax1 + (sx - sx1) * (ax2 - ax1) / (sx2 - sx1) : 0;
@@ -495,6 +511,7 @@ void pxi7_init(void) {
     if (f) { sNvramSize = (u32)fread(sNvram, 1, sizeof sNvram, f); fclose(f); }
     else if (fw) fprintf(stderr, "pxi7: can't read the firmware image %s: a default one\n", fw);
     if (!sNvramSize) default_firmware();
+    user_settings();
     wm7_init(sSavePath);  // (the MAC address and the wireless channels in the user settings' copy)
     // ARM7 callbacks ready for every tag (OSSystemWork.pxiHandleChecker[1])
     ((volatile u32 *)gHostSysWork.pxiHandleChecker)[1] = 0xffffffff;
