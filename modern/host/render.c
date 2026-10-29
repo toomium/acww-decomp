@@ -618,7 +618,9 @@ void render_frame(void) {
         if (sGpu3d) gpu3d_set_raster(raster3d), gpu3d_run_frame();
         return;
     }
-    gpu3d_set_raster(1);
+    // (a 3D picture drawn now would be shown by the next frame drawn, but the frame before that draws a newer one;
+    // the comparisons and the PC's GPU display draw every frame)
+    gpu3d_set_raster(sCompare || sGpuDisplay ? 1 : raster3d);
     // the 3D picture this frame shows (melonDS renders the next one in the frame)
     const uint32_t *lines3d = s3d;
     if (sGpu2d) {
