@@ -566,3 +566,10 @@ the exheader can enable core 2 on the New 3DS (1.3).
   + lighting 1.2; was about 8.5); the name entry about 60 (core 2: its 2D 8.4 ms, the GPU 3.1), the intro and the
   town 69-81 as before. -O3 kept. Only the start is below 60 now; core 0 there: the geometry engine 7.5, game 4.2,
   registers 2.0, the 2D record 1.7, sound 1.2, DMA 1.0 (about 19 ms).
+- 2026-10-29: the title's 3D in Azahar, function by function (180 samples): most of the geometry engine's commands
+  come through the GX FIFO's DMA, and each word went through the register layer (io_write, forward_display,
+  render_write32) before the engine. The DMA to a 3D command port now hands its words to the engine as one block, as
+  `HostIo_Send32` does (commit 88ac3b5e): Azahar's attract demo, core 0 22.7 -> 20.2 ms a frame (the `DMA` part
+  2.6 -> 0). Exact (the PC's save script byte for byte, Azahar's 6001 pictures). Still there: the DS divider's
+  64-bit divisions (`__udivmoddi4`, FX_Div's 64/32) about 3 % of the samples, the clipping's vertex copies (124
+  bytes, a third of them diagnostics) about 5 %, the 2D record's comparisons about 8 %.
