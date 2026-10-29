@@ -126,6 +126,7 @@ void frontend_backend_frame(AcwwShm *shm) {
     if (k & KEY_CPAD_LEFT) keys |= KEY_DLEFT;
     if (k & KEY_CPAD_UP) keys |= KEY_DUP;
     if (k & KEY_CPAD_DOWN) keys |= KEY_DDOWN;
+    if (k & KEY_ZR) keys |= KEY_B;  // (the New 3DS: ZR is B too - running while walking)
     shm->keys = keys;
     // the bottom screen's 320x240 to the DS's 256x192: all of it when the GPU shows it scaled, else its middle (a
     // touch outside it is none)

@@ -207,10 +207,10 @@ int pdisp_init(void) {
     return 1;
 }
 
-// ACWW_3DS_SCALE=1: the screens 1:1 (256x192) instead of 1.25 times (320x240)
+// the screens 1:1 (256x192, pixel for pixel); ACWW_3DS_SCALE=1.25: 1.25 times (320x240)
 int pdisp_scaled(void) {
     static int scaled = -1;
-    if (scaled < 0) scaled = !(getenv("ACWW_3DS_SCALE") && atoi(getenv("ACWW_3DS_SCALE")) == 1);
+    if (scaled < 0) scaled = getenv("ACWW_3DS_SCALE") && atof(getenv("ACWW_3DS_SCALE")) == 1.25;
     return scaled;
 }
 
