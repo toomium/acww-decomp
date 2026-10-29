@@ -573,3 +573,8 @@ the exheader can enable core 2 on the New 3DS (1.3).
   2.6 -> 0). Exact (the PC's save script byte for byte, Azahar's 6001 pictures). Still there: the DS divider's
   64-bit divisions (`__udivmoddi4`, FX_Div's 64/32) about 3 % of the samples, the clipping's vertex copies (124
   bytes, a third of them diagnostics) about 5 %, the 2D record's comparisons about 8 %.
+- 2026-10-29: the benchmark on hardware with the GX FIFO's DMA as one block (commit 88ac3b5e): the start (frames
+  360-2640) 52-59 frames a second (was 47-54), the geometry engine 6.7 ms a frame there (3.3 + vertices 2.2 +
+  lighting 1.2; was 7.5), DMA 1.0 -> 0.1; the rest as before (the name entry about 60, bound by core 2). The sound
+  in the benchmark (`ACWW_FAST=1`, unpaced) can't be right: slower than real time the DSP's queue runs dry
+  (crackles), faster the ring overflows and `feed_audio` skips ahead (jumps).
