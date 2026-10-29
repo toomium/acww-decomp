@@ -661,3 +661,17 @@ the exheader can enable core 2 on the New 3DS (1.3).
   a DS). The PC's save script (screenshots, sound, save file) and the oracle's quick run are byte for byte the
   build before's. Seen with Azahar on a virtual X server (Xvfb) and xdotool's clicks: the 3DS's mapping
   (frontend_3ds.c) was right all along.
+- 2026-10-29: the wide view's 2D screen (the user picked "the 2D layers drawn on beyond the DS's screen"). What
+  the game shows there (the PC build's registers and VRAM): in town the top screen is the sub engine's BG3 alone, an
+  affine BG with wrap on (the clouds, 256x256, each line with its own reference point) over a gradient that comes
+  from the per-line state; on the title the same BG3 and the logo on BG2 (a text BG) and OBJs (the stars); indoors
+  only OBJs (black); in the bus's name entry the 2D screen is the bottom one (the keyboard: text BGs and OBJs).
+  pica_display.c `margins2d`: on the screen without the wide 3D picture the engine's line groups are drawn again
+  around the DS's picture, with only the backdrop, the affine BGs that wrap, the colour effects and the master
+  brightness (the first and last line's state for the 24 lines above and below); OBJs, text BGs and the CPU's BGs
+  stay in the middle. The screens' targets get a stencil buffer in the wide view for that (VRAM free 2013 -> 1338 KB).
+  In Azahar the title's night sky fills the top screen without a seam (the gradient's bands and a cloud across the
+  old edge continuous); the keyboard stays 1:1 in its place, its margins black (its backdrop). The composited
+  pictures' hashes (`ACWW_PICA_HASH`, attract demo to frame 1500) are the build before's, with and without
+  `ACWW_WIDE`. Not seen yet: the town by day, on hardware. Seen in the bus with and without this change: a grey
+  slab in the 3D picture's lower left on some frames (Azahar's wrong window, or the wide 3D's own margins: open).
