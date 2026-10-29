@@ -649,3 +649,6 @@ the exheader can enable core 2 on the New 3DS (1.3).
   The wish behind it: the text boxes at the screen's bottom edge. They are 2D (in the bus: the main engine on the
   top screen, BG0 3D, BG2 and the OBJs); moving the 2D layers down separates them from the 3D world (24 lines),
   and on the bottom screen the touch screen can then match only one of the two.
+- 2026-10-29, for later (the user): the wide view's text boxes end at the DS's old bottom edge (24 lines of world
+  below them); to be solved later (options: the 2D layers moved down on the top screen only, where there is no
+  touch; or on both screens, the touch then following the 2D layers).
