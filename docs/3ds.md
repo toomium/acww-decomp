@@ -486,3 +486,5 @@ the exheader can enable core 2 on the New 3DS (1.3).
   access, and every access worked out the GX FIFO interrupt's level although the game never enables it (IE
   0x4000b). Exact: that level only when enabled, the FIFO's blocks through `HostIo_Send32`, DMA memory to memory as
   one copy. Azahar: registers 7.8-8.6 -> 5.9-6.9 ms, DMA 3.0 -> 2.7, 22.7 -> 22.8-24.3 frames a second.
+- 2026-10-29: on hardware with the register layer's speed-ups (commit 280b8768): about 37 frames a second (27 ms,
+  was 30); registers 3.0-4.4 ms (was 4.4-5.6). Next: the renderers on core 2.
