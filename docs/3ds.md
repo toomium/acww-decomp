@@ -641,3 +641,11 @@ the exheader can enable core 2 on the New 3DS (1.3).
   the screen's bottom edge (`GPU3D_WIDE_TOP` = 48 lines of world above, none below; the touch screen follows,
   `pdisp_touch_y0`). For later: the screen transitions (black shapes closing in from the edges, an iris) cover only
   the DS's picture, so the margins show through them.
+- 2026-10-29: the circle pad walks at any angle and as fast as it is tilted (commit dfdf6c71, `ACWW_ANALOG=0`
+  off): `Pad_Update` takes the pad's angle (include/host_input.h) instead of the D-pad's eight, and the player's
+  walking speed follows the tilt in the D-pad branch (as the stylus's distance does; a light tilt walks at a
+  quarter, B still runs). Under HOST and only while the pad holds a direction: the PC's save script byte for byte.
+  The wide view's DS picture is centred again (the user: "the middle stays the middle"; c8c749b0 reverted).
+  The wish behind it: the text boxes at the screen's bottom edge. They are 2D (in the bus: the main engine on the
+  top screen, BG0 3D, BG2 and the OBJs); moving the 2D layers down separates them from the 3D world (24 lines),
+  and on the bottom screen the touch screen can then match only one of the two.
