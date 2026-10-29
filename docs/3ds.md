@@ -682,3 +682,12 @@ the exheader can enable core 2 on the New 3DS (1.3).
   50-58 frames a second. The runs went different ways, so the numbers are rough. What is left of the cost (not
   measured apart): BG3 drawn three times over the margins (the blending: over the backdrop, as it is, the stencil)
   from a texture in linear memory. The watchdog report at the end of both runs: the home menu, as before.
+- 2026-10-29: two more for the wide view's GPU time (not yet measured on hardware). (1) In the margins the blended
+  sky took three passes; the "as it is" pass is left out over a backdrop that is all 2nd target (it draws nothing
+  there), the stencil marking after the last margin layer when no brightness effect follows (nothing reads it).
+  (2) The BG textures the GPU draws from VRAM live in VRAM where they fit. First try: the CPU decoded the tiles
+  straight into VRAM, and the hardware stopped with a data abort (permission) on core 2 in `bg_tile`: the
+  application's CPU may not write VRAM (Azahar lets it). Now the tiles are decoded into a copy in linear memory and
+  `C3D_TexLoadImage` has the GPU copy it to VRAM when it changed (for a VRAM texture it calls
+  `C3D_SyncTextureCopy`, seen in libcitro3d's code). Azahar: the composited pictures' hashes as the build before,
+  with and without `ACWW_WIDE`.
