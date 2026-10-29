@@ -497,3 +497,16 @@ the exheader can enable core 2 on the New 3DS (1.3).
   the thread, with it and 5 ms delays per job (`ACWW_PICA_DELAY`), and without it (`ACWW_PICA_THREAD=0`); the
   screenshots are the build before's. Azahar runs the cores one after another, so its frames a second (23.7 ->
   25.8) say little: the hardware decides. The `render:` line's 3D and compositing are now only the submitting.
+- 2026-10-29: exactness of the GPU thread with the game played (the save script to frame 12000: new game, the town,
+  menus, a house; `acww.cfg` lines can be 16 KB now for its `ACWW_KEYS`): the 6001 composited pictures' hashes are
+  the same with the thread and 5 ms delays per job as without it, for the first version and for the queue.
+- 2026-10-29: on hardware the first version of the GPU thread gave nothing (37 frames a second): the game's thread
+  waited about 4 ms a frame for it while it was idle three quarters of the time. The game works every third frame
+  and the frames between are short, so waiting for the last job each frame waited for work just submitted. With a
+  queue and waits only for the job whose inputs change (commit after 36943403): about 43 frames a second (38.5-46,
+  23 ms), waiting 0.1 ms. The game's core: the geometry engine 8.0 (4.0 + vertices 2.7 + lighting 1.3), registers
+  4.7 (3-10), game 4.2, 2D 3.2, sound 1.1, DMA 0.9, the jobs' submitting 0.7. Core 2: 3D 2.4, compositing 2.5,
+  waiting for the GPU 2.8, idle about 15. Also fixed: a data abort on core 2 when the game was closed from the home
+  menu (the sampler woke while the program's end had freed its stack; the background threads stop first now).
+  Next: what the registers' time is (ROM reads through the card registers?), the geometry engine, then the 2D
+  renderer on core 2 (record each line's state on core 0, draw on core 2).
