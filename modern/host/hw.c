@@ -489,6 +489,7 @@ void HostDma_Addresses(unsigned int ch, uintptr_t src, uintptr_t dst) {
 static uintptr_t dma_address(u32 reg, uintptr_t full) { return (u32)full == reg ? full : reg; }
 static int dma_is_io(uintptr_t a) { return a <= 0xffffffffu && is_io((u32)a); }
 void gx_fifo_write(u32 addr, u32 value);
+static int sTimingLegacy; static u32 sPollAddr; static long sIoLog;  // (defined below)
 static void dma_run(int ch) {
     HOST_PROF(PROF_DMA);
     u32 base = 0x040000b0 + ch * 12, cnt = R32(base + 8);
@@ -508,6 +509,19 @@ static void dma_run(int ch) {
         memcpy((void *)dst, (const void *)src, (size_t)n * w);
         src += (uintptr_t)n * w;
         dst += (uintptr_t)n * w;
+        n = 0;
+    }
+    // memory to a 3D command port (the GX FIFO's DMA): the words the loop below would write, without the register
+    // layer per word (io_write does nothing else for them: no interrupt is checked between a DMA's words)
+    u32 d32 = (u32)dst;
+    if (w == 4 && sc == 0 && dc == 2 && n && !dma_is_io(src) && dst == d32 && d32 >= 0x04000400 && d32 < 0x04000600 &&
+        sTimingLegacy == 0 && sTimeless + n < 1000000 && sIoLog == -1) {
+        R32(d32) = ((const u32 *)src)[n - 1];
+        sPollAddr = ~0u;
+        sTimeless += n;
+        sGxWrites += n;
+        render_write32_n(d32, (const u32 *)src, n);
+        src += (uintptr_t)n * 4;
         n = 0;
     }
     for (u32 i = 0; i < n; i++) {
