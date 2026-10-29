@@ -97,16 +97,33 @@ static u64 tm_next_overflow(Timer *t) {
 
 // ---- ACWW_FPS's profile (host.h): the game's thread marks the part it is in, a sampler thread counts them every
 // millisecond; with the fps line, each part's share of the real time as milliseconds a frame
+// The background threads (the watchdog, ACWW_FPS's sampler) stop before the program ends (host_quit): the 3DS frees
+// the heap, their stacks too, before it ends the process, and a thread waking in between faults
+static int sThreadsQuit, sThreadsRunning;  // (atomics)
+static int threads_quitting(void) { return __atomic_load_n(&sThreadsQuit, __ATOMIC_ACQUIRE); }
+static void thread_stopped(void) { __atomic_sub_fetch(&sThreadsRunning, 1, __ATOMIC_RELEASE); }
+static int thread_start(void (*fn)(void *), void *arg, int sampler) {
+    __atomic_add_fetch(&sThreadsRunning, 1, __ATOMIC_RELAXED);
+    if (sampler ? host_plat_sampler_start(fn, arg) : host_plat_thread_start(fn, arg)) return 1;
+    thread_stopped();
+    return 0;
+}
+static void threads_stop(void) {
+    __atomic_store_n(&sThreadsQuit, 1, __ATOMIC_RELEASE);
+    for (int i = 0; i < 50 && __atomic_load_n(&sThreadsRunning, __ATOMIC_ACQUIRE); i++) host_plat_sleep_ms(5);
+}
+
 volatile int gHostProf, gHostProfWorker = PROF_IDLE;
 static u32 sProfSamples[2][PROF_N];  // the game's thread, the GPU thread (written by the sampler only)
 static void prof_sampler(void *arg) {
     (void)arg;
-    for (;;) {
+    while (!threads_quitting()) {
         host_plat_sleep_ms(1);
         int p = gHostProf, w = gHostProfWorker;
         __atomic_store_n(&sProfSamples[0][p], sProfSamples[0][p] + 1, __ATOMIC_RELAXED);
         __atomic_store_n(&sProfSamples[1][w], sProfSamples[1][w] + 1, __ATOMIC_RELAXED);
     }
+    thread_stopped();
 }
 static void prof_report(double frameMs) {
     static const char *const kNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
@@ -160,7 +177,7 @@ void host_set_paused(int paused) {
 static void watchdog(void *arg) {
     u32 limit = (u32)(uintptr_t)arg, still = 0, last = 0;
     int reported = 0;
-    for (;;) {
+    while (!threads_quitting()) {
         host_plat_sleep_ms(100);
         u32 hb = __atomic_load_n(&sHeartbeat, __ATOMIC_RELAXED);
         if (hb != last || __atomic_load_n(&sPaused, __ATOMIC_RELAXED)) { last = hb; still = 0; reported = 0; continue; }
@@ -172,12 +189,13 @@ static void watchdog(void *arg) {
                     __atomic_load_n(&sHeartbeatFrame, __ATOMIC_RELAXED));
         }
     }
+    thread_stopped();
 }
 static void watchdog_start(void) {
     const char *e = getenv("ACWW_WATCHDOG");
     long ms = e ? strtol(e, 0, 10) : 2000;
     if (ms <= 0) return;
-    if (!host_plat_thread_start(watchdog, (void *)(uintptr_t)ms)) fprintf(stderr, "host: no watchdog thread\n");
+    if (!thread_start(watchdog, (void *)(uintptr_t)ms, 0)) fprintf(stderr, "host: no watchdog thread\n");
 }
 
 // ---- screenshots: ACWW_SHOT="frame:path.ppm;..." (both screens, 256x384)
@@ -406,7 +424,7 @@ static void run_events_body(void) {
             if (last) {
                 fprintf(stderr, "fps: frame %llu %.1f\n", (unsigned long long)host_frame(), 120 / ((double)(now - last) * 1e-9));
                 prof_report((double)(now - last) / 120e6);
-            } else if (!host_plat_sampler_start(prof_sampler, 0)) {
+            } else if (!thread_start(prof_sampler, 0, 1)) {
                 fprintf(stderr, "host: no thread for ACWW_FPS's profile\n");
             }
             last = now;
@@ -722,6 +740,7 @@ static uintptr_t io_last_caller(void) { return sRing[(sRingPos - 1) & 15].pc; }
 // down, the reports written, then _Exit - not exit, whose handlers would run the game's static destructors, which
 // free into heaps that aren't there any more outside the game's threads
 void host_quit(void) {
+    threads_stop();
     extern void snd7_output_close(void);
     snd7_output_close();
     extern void frontend_shutdown(void);
