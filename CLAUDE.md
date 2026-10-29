@@ -13,6 +13,7 @@ Read first, depending on the task:
 - `docs/3ds.md`: the 3DS plan, rules (section 0) and dated work log (section 6: current state and next steps).
 - `docs/host.md`: how the runtime works, every `ACWW_*` option, and how changes are checked.
 - `docs/portability.md`: the PC port's plan and log.
+- `docs/3ds-real-port.md`: this branch's experiment (a real port instead of the rebuilt DS) and its log.
 
 ## Build
 
