@@ -90,8 +90,10 @@ void gpu2d_write32(uint32_t addr, uint32_t value);
 uint32_t gpu2d_read32(uint32_t addr);  // what was written (diagnostics)
 
 void gpu2d_render_frame(const Gpu2dFrameInput *in);
-// the layers of the last frame recorded with deferLayers (until the next gpu2d_render_frame, which mustn't overlap it)
-void gpu2d_draw_layers(void);
+// deferLayers: the record the last frame went to (two in turn), and drawing a record's layers (and Gpu2dLayers'
+// frame fields; not while the record after the next is made)
+int gpu2d_record(void);
+void gpu2d_draw_layers(int record);
 // screen 0 top, 1 bottom (POWCNT1 bit 15 decides which engine shows where): 256x192 pixels, 0xffRRGGBB
 const uint32_t *gpu2d_screen(int screen);
 
