@@ -292,7 +292,7 @@ elif N3DS:
     # size), except the files that use libctru's structures (N3DS_NATIVE: the library's own default); the linker's
     # notes about the mix are expected
     # (-O2: the 3DS's CPU is slow, the runtime's loops are much of its time)
-    HOST_FLAGS = (f"{M_FLAG} -O2 -g -fno-omit-frame-pointer -Wall -std=gnu11 -DHOST -Iinclude -D__3DS__ "
+    HOST_FLAGS = (f"{M_FLAG} -O3 -g -fomit-frame-pointer -Wall -std=gnu11 -DHOST -Iinclude -D__3DS__ "
                   f"-I{DKP}/libctru/include -DHOST_DEBUG_POSIX=0 -fno-short-enums" + FRONTEND_FLAG)
     LINK_FLAGS = f"{M_FLAG} -specs=3dsx.specs -L{DKP}/libctru/lib -Wl,--no-enum-size-warning,--no-wchar-size-warning"
     HOST_CXX_FLAGS = f"{M_FLAG} -O1 -g -std=c++17 -DHOST"
@@ -438,6 +438,7 @@ def main():
             # the 2D and 3D renderers' per-pixel loops: optimised further than the rest of the runtime (-O1)
             fl = "-fshort-enums" if N3DS and s.name in N3DS_NATIVE else SDL_CFLAGS if sdl else WGPU_CFLAGS + f" -I{build}/gen" if s.name == "wgpu_display.c" else \
                 WGPU_CFLAGS if s.name == "gpu3d_wgpu.c" else \
+                "-O3" if N3DS and s.name == "gpu3d_geom.c" else \
                 "-O2" if "gpu2d" in s.parts or "gpu3d" in s.parts else None
             n.build(o, rule, str(s), variables={"flags": fl} if fl else None, implicit=implicit)
             objs.append(o)
