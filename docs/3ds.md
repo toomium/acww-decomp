@@ -481,3 +481,8 @@ the exheader can enable core 2 on the New 3DS (1.3).
   1.2-1.5, game 3.8-4.0, 2D 3.0-3.8, 3D 2.3-2.5 (was 6.0-7.8), compositing 2.2-2.5, sound 1.6-1.9, DMA 1.0-1.4,
   GPU wait 0.5-0.7, frontend and pacing 0.1-0.3. So the waits for the GPU are small; what has to stay on the
   game's core (game, registers, DMA, the geometry engine, sound) is about 21 ms, the renderers about 9.
+- 2026-10-29: the registers: 53 % of the game's register accesses are words for the 3D command FIFO from
+  `MIi_CpuSend32` (`ACWW_IOHIST`, the save script); in the samples the register layer's time is its dispatch per
+  access, and every access worked out the GX FIFO interrupt's level although the game never enables it (IE
+  0x4000b). Exact: that level only when enabled, the FIFO's blocks through `HostIo_Send32`, DMA memory to memory as
+  one copy. Azahar: registers 7.8-8.6 -> 5.9-6.9 ms, DMA 3.0 -> 2.7, 22.7 -> 22.8-24.3 frames a second.
