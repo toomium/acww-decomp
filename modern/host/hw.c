@@ -97,31 +97,36 @@ static u64 tm_next_overflow(Timer *t) {
 
 // ---- ACWW_FPS's profile (host.h): the game's thread marks the part it is in, a sampler thread counts them every
 // millisecond; with the fps line, each part's share of the real time as milliseconds a frame
-volatile int gHostProf;
-static u32 sProfSamples[PROF_N];  // (written by the sampler only)
+volatile int gHostProf, gHostProfWorker = PROF_IDLE;
+static u32 sProfSamples[2][PROF_N];  // the game's thread, the GPU thread (written by the sampler only)
 static void prof_sampler(void *arg) {
     (void)arg;
     for (;;) {
         host_plat_sleep_ms(1);
-        int p = gHostProf;
-        __atomic_store_n(&sProfSamples[p], sProfSamples[p] + 1, __ATOMIC_RELAXED);
+        int p = gHostProf, w = gHostProfWorker;
+        __atomic_store_n(&sProfSamples[0][p], sProfSamples[0][p] + 1, __ATOMIC_RELAXED);
+        __atomic_store_n(&sProfSamples[1][w], sProfSamples[1][w] + 1, __ATOMIC_RELAXED);
     }
 }
 static void prof_report(double frameMs) {
     static const char *const kNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
                                                "sound", "frontend", "pacing", "GPU wait", "lighting",
-                                               "vertices"};
-    static u32 seen[PROF_N];
-    u32 n[PROF_N], total = 0;
-    for (int i = 0; i < PROF_N; i++) {
-        n[i] = __atomic_load_n(&sProfSamples[i], __ATOMIC_RELAXED) - seen[i];
-        seen[i] += n[i];
-        total += n[i];
+                                               "vertices", "waiting for the GPU thread", "idle"};
+    static u32 seen[2][PROF_N];
+    for (int t = 0; t < 2; t++) {
+        u32 n[PROF_N], total = 0;
+        for (int i = 0; i < PROF_N; i++) {
+            n[i] = __atomic_load_n(&sProfSamples[t][i], __ATOMIC_RELAXED) - seen[t][i];
+            seen[t][i] += n[i];
+            total += n[i];
+        }
+        if (!total || (t == 1 && n[PROF_IDLE] == total)) continue;  // (no GPU thread: always idle)
+        fprintf(stderr, "profile%s: %u samples, ms a frame:", t ? ", the GPU thread" : "", total);
+        for (int i = 0; i < PROF_N; i++)
+            if (t == 0 ? i != PROF_IDLE : (i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_IDLE))
+                fprintf(stderr, " %s %.1f", kNames[i], frameMs * n[i] / total);
+        fprintf(stderr, "\n");
     }
-    if (!total) return;
-    fprintf(stderr, "profile: %u samples, ms a frame:", total);
-    for (int i = 0; i < PROF_N; i++) fprintf(stderr, " %s %.1f", kNames[i], frameMs * n[i] / total);
-    fprintf(stderr, "\n");
 }
 
 // ---- real time: one frame per 1/60 s unless ACWW_FAST is set
