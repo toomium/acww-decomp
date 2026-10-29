@@ -542,3 +542,9 @@ the exheader can enable core 2 on the New 3DS (1.3).
         python3 tools/host_play_script.py save | sed "s/^export //; s/='/=/; s/'\$//"; } > build/host3ds_usa/acww-bench.cfg
 
   (`ACWW_SAVE=` empty: a blank save each run, nothing written.) Runs in Azahar with a window (to frame 3000).
+- 2026-10-29: the benchmark on hardware, -O1 against -O2: -O2 makes the game's code about 5-8 % faster (about 2 %
+  overall); kept. The benchmark's second half (the name entry, frames 4300-7700, about 56 frames a second; the
+  town, 62-72) is bound by core 2: its 2D (OBJs, windows, the layers' conversion) up to 8.6 ms and its waits for
+  the GPU about 4.5 ms a frame. Tried and reverted: drawing the layers straight into their textures in the GPU's
+  tile order instead of display transfers made it slower (48 and 56-64): the GPU thread then has to wait for the
+  GPU before drawing the layers instead of drawing them while the GPU works, and the tiled writes cost the CPU more.
