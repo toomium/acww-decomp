@@ -42,6 +42,13 @@ void host_io_ring_dump(void);          // the last register accesses (stderr)
 void host_quit(void) __attribute__((noreturn));  // the end of a run: reports, then _Exit (hw.c)
 void host_set_paused(int paused);  // the frontend holds the game (the watchdog keeps quiet)
 void host_exit_dumps(void);            // the reports written at exit (ACWW_IOHIST, ACWW_PROFILE)
+// ACWW_FPS's profile (hw.c): the part of the program the game's thread is in, read every millisecond by a sampler
+// thread; HOST_PROF(part) sets it for the rest of the enclosing block. Whatever isn't marked is PROF_GAME: the game
+// with its SDK and the runtime's remaining parts.
+enum { PROF_GAME, PROF_REGS, PROF_DMA, PROF_GEOM, PROF_2D, PROF_3D, PROF_COMP, PROF_SOUND, PROF_FRONT, PROF_PACE, PROF_N };
+extern volatile int gHostProf;
+static inline void host_prof_restore(int *saved) { gHostProf = *saved; }
+#define HOST_PROF(part) int hostProfSaved_ __attribute__((cleanup(host_prof_restore))) = gHostProf; gHostProf = (part)
 
 // debug_posix.c (empty without HOST_DEBUG_POSIX)
 void host_debug_init(void);

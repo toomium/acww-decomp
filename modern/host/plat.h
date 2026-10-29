@@ -27,6 +27,9 @@ void host_plat_restart(char **argv);
 
 // ---- threads: a detached background thread (the watchdog); 0 if it couldn't be started
 int host_plat_thread_start(void (*fn)(void *), void *arg);
+// a thread that runs while the game's thread is busy (ACWW_FPS's sampler): on another core, or where there is only
+// one, at a higher priority; 0 if it couldn't be started
+int host_plat_sampler_start(void (*fn)(void *), void *arg);
 
 // ---- memory
 // A stack of n bytes (rounded up to whole pages) for a coroutine (coro.h), with an inaccessible guard page below it

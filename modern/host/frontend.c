@@ -50,7 +50,10 @@ void frontend_frame(void) {
             for (int s = 0; s < 2; s++) memcpy(sShm->pixels + s * 256 * 192, render_screen(s), 256 * 192 * 4);
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
         sShm->frame++;
-        frontend_backend_frame(sShm);
+        {
+            HOST_PROF(PROF_FRONT);
+            frontend_backend_frame(sShm);
+        }
         if (sShm->quit) host_quit();
         u32 k = sShm->keys;
         keyinput = (u16)(~k & 0x3ff);

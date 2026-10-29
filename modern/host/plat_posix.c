@@ -80,6 +80,9 @@ int host_plat_thread_start(void (*fn)(void *), void *arg) {
     return 1;
 }
 
+// (the system shares the cores between threads by itself)
+int host_plat_sampler_start(void (*fn)(void *), void *arg) { return host_plat_thread_start(fn, arg); }
+
 static size_t page_size(void) {
     static size_t page;
     if (!page) page = (size_t)sysconf(_SC_PAGESIZE);

@@ -268,11 +268,15 @@ static void compare_state(u32 addr, u32 v) {
 void render_write32(u32 addr, u32 v) {
     if (sMelon) melon_write32(addr, v);
     if (sGpu2d && (addr < 0x04000400 || addr > 0x04000600)) gpu2d_write32(addr, v);  // (not the 3D command ports)
-    if (sGpu3d && is_3d(addr)) gpu3d_write32(addr, v);
+    if (sGpu3d && is_3d(addr)) {
+        HOST_PROF(PROF_GEOM);
+        gpu3d_write32(addr, v);
+    }
     if (sCompare > 1 && !sSelftest && addr >= 0x04000400 && addr <= 0x04000600) compare_state(addr, v);
 }
 
 u32 render_read32(u32 addr) {
+    HOST_PROF(PROF_GEOM);
     if (!sOwn3d) {
         u32 m = melon_read32(addr);
         if (sCompare) {
@@ -584,6 +588,7 @@ static void render_timing(u64 t0, u64 t1, u64 t2, u64 t3) {
 
 static void render_hblank(int line, void *context) {
     (void)context;
+    HOST_PROF(PROF_GAME);  // (the game's H-blank work)
     host_hblank(line);
 }
 // ACWW_FRAMESKIP=<n>: the screens drawn every n + 1 frames (the 3DS's default: 1, every other one; elsewhere 0).
@@ -609,6 +614,7 @@ void render_frame(void) {
     if (!draw2d && !sCompare && !sGpuDisplay) {
         if (sOwn)
             for (int line = 0; line < 192; line++) render_hblank(line, 0);
+        HOST_PROF(raster3d ? PROF_3D : PROF_GEOM);
         if (sGpu3d) gpu3d_set_raster(raster3d), gpu3d_run_frame();
         return;
     }
@@ -621,6 +627,7 @@ void render_frame(void) {
         else melon_3d_lines(s3d);
     }
     if (sMelon) melon_frame();
+    HOST_PROF(PROF_2D);
     u64 t0 = host_plat_time_ns();
     if (sGpu2d || sGpu3d) host_vram_flush();
     if (sGpu2d) {
@@ -646,9 +653,11 @@ void render_frame(void) {
         }
     }
     u64 t1 = host_plat_time_ns();
+    gHostProf = PROF_3D;
     void *texture3d = sPica && sOwn3d ? gpu3d_pica_picture() : NULL;  // (the last frame's, as lines3d)
     if (sGpu3d) gpu3d_run_frame();
     u64 t2 = host_plat_time_ns();
+    gHostProf = PROF_COMP;
     if (sPica) pdisp_frame(texture3d, sOwn3d ? lines3d : NULL);  // (the 3D picture the 2D renderer would have shown)
     render_timing(t0, t1, t2, host_plat_time_ns());
     if (sCompare && !sSelftest) {

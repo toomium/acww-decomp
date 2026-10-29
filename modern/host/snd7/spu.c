@@ -245,6 +245,7 @@ static void mix_one(s16 out[2]) {
 }
 
 void spu_mix_until(u64 cycles) {
+    HOST_PROF(PROF_SOUND);
     s16 buf[512 * 2];
     u32 n = 0;
     while (sMixed + SAMPLE_CYCLES <= cycles) {

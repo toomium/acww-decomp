@@ -457,6 +457,7 @@ static void dump_state(void) {
 
 // from the host's event loop: the periodic passes and alarms due by now, and the audio up to now
 void snd7_run(u64 now) {
+    HOST_PROF(PROF_SOUND);
     if (!sInit) snd7_init();
     while (!sTimerStopped && sNextTick <= now) {
         alarms_run(sNextTick);

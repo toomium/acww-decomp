@@ -36,6 +36,7 @@ void OSi_RescheduleThread(void);
 
 void host_deliver_irqs(void) {
     if (sInIrq) return;
+    HOST_PROF(PROF_GAME);  // (the handlers are the game's)
     for (;;) {
         u32 pending = host_irq_pending();
         if (!pending || sIrqDisabled) break;

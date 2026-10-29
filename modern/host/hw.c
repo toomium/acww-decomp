@@ -92,10 +92,39 @@ static u64 tm_next_overflow(Timer *t) {
     return t->start + (done + 1) * p;
 }
 
+// ---- ACWW_FPS's profile (host.h): the game's thread marks the part it is in, a sampler thread counts them every
+// millisecond; with the fps line, each part's share of the real time as milliseconds a frame
+volatile int gHostProf;
+static u32 sProfSamples[PROF_N];  // (written by the sampler only)
+static void prof_sampler(void *arg) {
+    (void)arg;
+    for (;;) {
+        host_plat_sleep_ms(1);
+        int p = gHostProf;
+        __atomic_store_n(&sProfSamples[p], sProfSamples[p] + 1, __ATOMIC_RELAXED);
+    }
+}
+static void prof_report(double frameMs) {
+    static const char *const kNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
+                                               "sound", "frontend", "pacing"};
+    static u32 seen[PROF_N];
+    u32 n[PROF_N], total = 0;
+    for (int i = 0; i < PROF_N; i++) {
+        n[i] = __atomic_load_n(&sProfSamples[i], __ATOMIC_RELAXED) - seen[i];
+        seen[i] += n[i];
+        total += n[i];
+    }
+    if (!total) return;
+    fprintf(stderr, "profile: %u samples, ms a frame:", total);
+    for (int i = 0; i < PROF_N; i++) fprintf(stderr, " %s %.1f", kNames[i], frameMs * n[i] / total);
+    fprintf(stderr, "\n");
+}
+
 // ---- real time: one frame per 1/60 s unless ACWW_FAST is set
 static int sFast = -1;
 static u64 sNextFrame;  // host_plat_time_ns
 static void host_pace_frame(void) {
+    HOST_PROF(PROF_PACE);
     // ACWW_FAST=1: never paced; ACWW_FAST=<frame> (> 1): not paced until that frame (a test gets somewhere quickly,
     // then runs in real time - the wireless tests: two copies keep each other's pace)
     if (sFast < 0) sFast = getenv("ACWW_FAST") ? (atoi(getenv("ACWW_FAST")) > 1 ? atoi(getenv("ACWW_FAST")) : 1) : 0;
@@ -365,7 +394,12 @@ static void run_events_body(void) {
         if (getenv("ACWW_FPS") && host_frame() % 120 == 0) {  // frames per second of real time, over the last 120
             static u64 last;
             u64 now = host_plat_time_ns();
-            if (last) fprintf(stderr, "fps: frame %llu %.1f\n", (unsigned long long)host_frame(), 120 / ((double)(now - last) * 1e-9));
+            if (last) {
+                fprintf(stderr, "fps: frame %llu %.1f\n", (unsigned long long)host_frame(), 120 / ((double)(now - last) * 1e-9));
+                prof_report((double)(now - last) / 120e6);
+            } else if (!host_plat_sampler_start(prof_sampler, 0)) {
+                fprintf(stderr, "host: no thread for ACWW_FPS's profile\n");
+            }
             last = now;
         }
         host_pace_frame();
@@ -428,6 +462,7 @@ static uintptr_t dma_address(u32 reg, uintptr_t full) { return (u32)full == reg 
 static int dma_is_io(uintptr_t a) { return a <= 0xffffffffu && is_io((u32)a); }
 void gx_fifo_write(u32 addr, u32 value);
 static void dma_run(int ch) {
+    HOST_PROF(PROF_DMA);
     u32 base = 0x040000b0 + ch * 12, cnt = R32(base + 8);
     uintptr_t src = dma_address(R32(base), sDmaSrc[ch]), dst = dma_address(R32(base + 4), sDmaDst[ch]);
     u32 n = cnt & 0x1fffff, w = (cnt >> 26 & 1) ? 4 : 2;
@@ -779,6 +814,7 @@ static void io_note(uintptr_t a, int write, void *caller) {
     if (sIoHist) io_hist((u32)a, (uintptr_t)caller, write);
 }
 unsigned long long HostIo_Read(uintptr_t addr, unsigned int size) {
+    HOST_PROF(PROF_REGS);
     u32 a = (u32)addr;
     if (sHBlankLine >= 0)  // (the H-blank handler's accesses: not the game code's traffic, host_hblank)
         return size == 8 ? io_load(a, 4) | (unsigned long long)io_load(a + 4, 4) << 32 : io_load(a, size);
@@ -789,6 +825,7 @@ unsigned long long HostIo_Read(uintptr_t addr, unsigned int size) {
     return v;
 }
 unsigned long long HostIo_Write(uintptr_t addr, unsigned int size, unsigned long long v) {
+    HOST_PROF(PROF_REGS);
     u32 a = (u32)addr;
     int traced = sHBlankLine < 0;  // (as for reads)
     if (traced) io_note(addr, 1, __builtin_return_address(0));
