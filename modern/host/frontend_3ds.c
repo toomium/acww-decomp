@@ -150,6 +150,7 @@ void frontend_backend_frame(AcwwShm *shm) {
 void frontend_backend_close(void) {
     pdisp_idle();
     if (sWaveData) { ndspExit(); linearFree(sWaveData); sWaveData = 0; }
+    pdisp_quit();
     gfxExit();
 }
 

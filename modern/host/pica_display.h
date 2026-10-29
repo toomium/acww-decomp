@@ -26,6 +26,10 @@ void pdisp_submit(int kind, void (*job)(void *), void *arg);
 void pdisp_frame_begun(int kind);
 void pdisp_wait(int kind, int older);
 void pdisp_idle(void);
+// GSP for the GPU's renderers (gspInit, counted), and before the program ends (the frontend, before gfxExit):
+// citro3d ended and those references given back, so that gfxExit's gspExit stops GSP's event thread
+void pdisp_gsp_init(void);
+void pdisp_quit(void);
 extern volatile int *gPicaProf;
 
 #endif

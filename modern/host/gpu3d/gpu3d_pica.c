@@ -192,7 +192,7 @@ static GPU_TEXTURE_WRAP_PARAM wrap(u32 tp, int axis) {
 // ---- set-up
 int g3p_init(void) {
     if (sTarget) return 1;
-    gspInit();  // (counted: the frontend's gfxInit may come before or after)
+    pdisp_gsp_init();  // (the frontend's gfxInit may come before or after)
     if (!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE * 4)) return 0;
     sTarget = C3D_RenderTargetCreate(W, H, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
     sVerts = linearAlloc(MAX_VERTS * sizeof(PVertex));

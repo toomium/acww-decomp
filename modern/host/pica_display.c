@@ -34,6 +34,8 @@ void pdisp_submit(int kind, void (*job)(void *), void *arg) { (void)kind, job(ar
 void pdisp_frame_begun(int kind) { (void)kind; }
 void pdisp_wait(int kind, int older) { (void)kind, (void)older; }
 void pdisp_idle(void) {}
+void pdisp_gsp_init(void) {}
+void pdisp_quit(void) {}
 
 #else
 
@@ -187,7 +189,7 @@ static int tex(C3D_Tex *t, GPU_TEXCOLOR fmt, int vram) {
 
 int pdisp_init(void) {
     if (sV) return 1;
-    gspInit();  // (counted, as gpu3d_pica.c: C3D_Init there, or here first)
+    pdisp_gsp_init();  // (as gpu3d_pica.c: C3D_Init there, or here first)
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE * 4);
     sV = linearAlloc(MAX_VERTS * sizeof(DVertex));
     sReadback = linearAlloc(TEX * TEX * 4);
@@ -209,6 +211,19 @@ int pdisp_init(void) {
         if (!sCompTarget[e]) return 0;
     }
     return 1;
+}
+
+// (the event thread GSP starts runs until the last gspExit: on a stack in the heap, which is freed before the process
+// ends - a GSP event in between faults)
+static int sGspRefs;
+void pdisp_gsp_init(void) {
+    gspInit();
+    sGspRefs++;
+}
+void pdisp_quit(void) {
+    pdisp_idle();
+    if (sGspRefs) C3D_Fini();
+    for (; sGspRefs; sGspRefs--) gspExit();
 }
 
 // the screens 1:1 (256x192, pixel for pixel); ACWW_3DS_SCALE=1.25: 1.25 times (320x240)
