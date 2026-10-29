@@ -635,3 +635,9 @@ the exheader can enable core 2 on the New 3DS (1.3).
   the objects near the edges early enough (it may cull what the DS wouldn't show), the speed; then step 2 if
   needed (the game's culling, behind an option). Not done: more polygon RAM (the DS's 2048 / 6144 limits now
   count the margins' polygons too: watch for missing polygons), the margins' fog colour and per-line effects.
+- 2026-10-29: the wide view on hardware (the user: "looks great"): the town about 60 frames a second, the
+  compositing's GPU time 13-15 ms a composited frame (was 9-11: the layers' textures in linear memory). The text
+  box was cut off: it is at the DS's bottom edge, and the 3D world went on below it; now the DS's picture sits at
+  the screen's bottom edge (`GPU3D_WIDE_TOP` = 48 lines of world above, none below; the touch screen follows,
+  `pdisp_touch_y0`). For later: the screen transitions (black shapes closing in from the edges, an iris) cover only
+  the DS's picture, so the margins show through them.
