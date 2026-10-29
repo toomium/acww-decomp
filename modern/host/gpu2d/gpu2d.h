@@ -56,9 +56,6 @@ typedef struct Gpu2dLayers {
     uint32_t bgMask[2];
     const uint8_t *palette[2];
     int topEngine;           // the engine on the top screen (POWCNT1 bit 15)
-    // 1: the pixel buffers are textures of 256 x 256 in the 3DS GPU's order (8 x 8 tiles left to right, then down;
-    // the pixels of a tile in Z order), the picture in their first 192 rows; 0: row by row
-    int tiled;
 } Gpu2dLayers;
 
 typedef struct Gpu2dFrameInput {

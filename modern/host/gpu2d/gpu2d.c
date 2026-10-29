@@ -484,19 +484,10 @@ static void compose_line(Engine *e, int line, const u32 *line3d, u32 *dst) {
 // ---- the layers to the caller (Gpu2dFrameInput.layers): a line's BG and OBJ pixels in the 3DS GPU's formats, the
 // windows' layer masks applied, and the line's compositing state
 static u16 sTo5551[0x8000];
-// where pixel x of a line is in the layers' buffers (Gpu2dLayers.tiled: in its 8 x 8 tile, which are 64 pixels each)
-static u32 sTiled[8][SCREEN_W];
-static inline u32 layer_index(int line, int x) {
-    return sLayers->tiled ? (u32)(line >> 3) * (SCREEN_W * 8) + sTiled[line & 7][x] : (u32)(line * SCREEN_W + x);
-}
 static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
     u32 dispcnt = reg32(e, REG_DISPCNT);
     if (!sTo5551[1])
         for (u32 c = 0; c < 0x8000; c++) sTo5551[c] = (u16)((c & 31) << 11 | (c >> 5 & 31) << 6 | (c >> 10 & 31) << 1 | 1);
-    if (!sTiled[1][0])
-        for (u32 y = 0; y < 8; y++)
-            for (u32 x = 0; x < SCREEN_W; x++)
-                sTiled[y][x] = (x >> 3) * 64 + ((x & 1) | (y & 1) << 1 | (x & 2) << 1 | (y & 2) << 2 | (x & 4) << 2 | (y & 4) << 3);
     u8 mask[SCREEN_W], region[SCREEN_W];
     window_line(e, &e->obj, mask, region);
     obj_mosaic_x(e, &e->obj);
@@ -505,25 +496,24 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
     for (int n = 0; n < 4; n++) {
         ls->prio[n] = reg16(e, REG_BGCNT + 2 * (u32)n) & 3;
         if (!(dispcnt & 0x100u << n) || (n == 0 && is3d) || (ls->gpuBg >> n & 1)) continue;
-        u16 *d = sLayers->bg[e->num][n];
+        u16 *d = sLayers->bg[e->num][n] + line * SCREEN_W;
         const u16 *s = e->bg[n];
         for (int x = 0; x < SCREEN_W; x++)
-            d[layer_index(line, x)] = (s[x] & PIX_OPAQUE) && (mask[x] >> n & 1) ? sTo5551[s[x] & 0x7fff] : 0;
+            d[x] = (s[x] & PIX_OPAQUE) && (mask[x] >> n & 1) ? sTo5551[s[x] & 0x7fff] : 0;
     }
     if (dispcnt & 0x1000) {
-        u32 *d = sLayers->obj[e->num];
+        u32 *d = sLayers->obj[e->num] + line * SCREEN_W;
         const ObjLine *obj = &e->obj;
         for (int x = 0; x < SCREEN_W; x++) {
-            u32 i = layer_index(line, x);
-            if (!obj->source[x] || !(mask[x] & 0x10)) { d[i] = 0; continue; }
+            if (!obj->source[x] || !(mask[x] & 0x10)) { d[x] = 0; continue; }
             u16 c = obj_color(e, dispcnt, obj, x);
             u32 r = c & 31, g = c >> 5 & 31, b = c >> 10 & 31;
-            d[i] = (r << 3 | r >> 2) << 24 | (g << 3 | g >> 2) << 16 | (b << 3 | b >> 2) << 8 | (obj->prio[x] + 1u) * 32;
+            d[x] = (r << 3 | r >> 2) << 24 | (g << 3 | g >> 2) << 16 | (b << 3 | b >> 2) << 8 | (obj->prio[x] + 1u) * 32;
         }
     }
     if (dispcnt & 0xe000) {
-        u32 *d = sLayers->region[e->num];
-        for (int x = 0; x < SCREEN_W; x++) d[layer_index(line, x)] = 63u + 64u * region[x];
+        u32 *d = sLayers->region[e->num] + line * SCREEN_W;
+        for (int x = 0; x < SCREEN_W; x++) d[x] = 63u + 64u * region[x];
     }
 }
 
