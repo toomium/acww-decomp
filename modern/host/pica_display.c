@@ -29,7 +29,8 @@ void pdisp_attach_screens(void) {}
 struct Gpu2dLayers *pdisp_layers(void) { return 0; }
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
-void pdisp_submit(void (*job)(void *), void *arg) { job(arg); }
+void pdisp_submit(int kind, void (*job)(void *), void *arg) { (void)kind, job(arg); }
+void pdisp_wait(int kind) { (void)kind; }
 void pdisp_idle(void) {}
 
 #else
@@ -79,28 +80,36 @@ static const u32 kTiledToLinear = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TIL
                                   GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8);
 
 // ---- the GPU thread (docs/3ds.md): the 3D pictures (gpu3d_pica.c) and the compositing on the New 3DS's core 2,
-// while the game's thread goes on with the next frame. One job at a time: the game's thread waits for the last one
-// before it submits another and before it changes what a job reads (render.c: the 3D engine's list and textures,
-// the 2D renderer's layers); VRAM and the BG palettes, which the game changes when it likes, are copied for the
-// compositing (snapshot). citro3d is the GPU thread's then: the game's thread uses it only when that is idle.
+// while the game's thread goes on with the next frame. The jobs in turn, from a short queue: the game's thread waits
+// for the last one of a kind before it changes what that reads (render.c: the 3D engine's list and textures for the
+// 3D picture, the 2D renderer's layers for the compositing; here and gpu3d_pica.c: the jobs' own inputs), not for
+// the others (the game's frames are uneven: it works every third one, the 3D engine swaps then); VRAM and the BG
+// palettes, which the game changes when it likes, are copied for the compositing (snapshot). citro3d is the GPU thread's then: the game's thread uses it only when that is idle.
 // Without core 2 (an Old 3DS; ACWW_PICA_THREAD=0) the jobs are done at once. For the check that a job sees what it
 // would at once: ACWW_PICA_DELAY=<ms>, each job waits that long first; ACWW_PICA_HASH=1, a hash of each composited
 // picture in the log.
 volatile int *gPicaProf = &gHostProf;
+enum { QUEUE = 4 };
 static Thread sWorker;
-static LightEvent sGo, sDone;
-static void (*sJob)(void *);
-static void *sJobArg;
-static int sPending;  // (the game's thread's: a job was submitted whose end it hasn't waited for)
+static LightLock sLock;  // (over the queue and the counts)
+static CondVar sChanged;
+static struct { void (*fn)(void *); void *arg; } sQueue[QUEUE];
+static u32 sSubmitted, sDone, sLastOf[2];  // jobs submitted, done; the number of the last of each kind
 static int sDelayMs;
 
 static void worker(void *arg) {
     (void)arg;
+    LightLock_Lock(&sLock);
     for (;;) {
-        LightEvent_Wait(&sGo);
+        while (sDone == sSubmitted) CondVar_Wait(&sChanged, &sLock);
+        void (*fn)(void *) = sQueue[sDone % QUEUE].fn;
+        void *a = sQueue[sDone % QUEUE].arg;
+        LightLock_Unlock(&sLock);
         if (sDelayMs) svcSleepThread((s64)sDelayMs * 1000000);
-        sJob(sJobArg);
-        LightEvent_Signal(&sDone);
+        fn(a);
+        LightLock_Lock(&sLock);
+        sDone++;
+        CondVar_WakeUp(&sChanged, ARBITRATION_SIGNAL_ALL);
     }
 }
 static void start_worker(void) {
@@ -109,27 +118,35 @@ static void start_worker(void) {
     const char *e = getenv("ACWW_PICA_THREAD");
     if (e && !atoi(e)) return;
     sDelayMs = getenv("ACWW_PICA_DELAY") ? atoi(getenv("ACWW_PICA_DELAY")) : 0;
-    LightEvent_Init(&sGo, RESET_ONESHOT);
-    LightEvent_Init(&sDone, RESET_ONESHOT);
+    LightLock_Init(&sLock);
+    CondVar_Init(&sChanged);
     s32 prio = 0x30;
     svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
     sWorker = threadCreate(worker, 0, 64 * 1024, prio, 2, true);
     if (sWorker) gPicaProf = &gHostProfWorker;
     fprintf(stderr, "3ds: the GPU work %s\n", sWorker ? "on core 2" : "on the game's core (no core 2)");
 }
-void pdisp_idle(void) {
-    if (!sPending) return;
-    HOST_PROF(PROF_WAIT);
-    LightEvent_Wait(&sDone);
-    sPending = 0;
+static void wait_done(int last, int kind) {
+    if (!sWorker) return;
+    LightLock_Lock(&sLock);
+    u32 n = last ? sSubmitted : sLastOf[kind];
+    if (sDone < n) {
+        HOST_PROF(PROF_WAIT);
+        while (sDone < n) CondVar_Wait(&sChanged, &sLock);
+    }
+    LightLock_Unlock(&sLock);
 }
-void pdisp_submit(void (*job)(void *), void *arg) {
+void pdisp_wait(int kind) { wait_done(0, kind); }
+void pdisp_idle(void) { wait_done(1, 0); }
+void pdisp_submit(int kind, void (*job)(void *), void *arg) {
     start_worker();
     if (!sWorker) { job(arg); return; }
-    pdisp_idle();
-    sJob = job, sJobArg = arg;
-    sPending = 1;
-    LightEvent_Signal(&sGo);
+    LightLock_Lock(&sLock);
+    while (sSubmitted - sDone >= QUEUE) CondVar_Wait(&sChanged, &sLock);
+    sQueue[sSubmitted % QUEUE].fn = job, sQueue[sSubmitted % QUEUE].arg = arg;
+    sLastOf[kind] = ++sSubmitted;
+    CondVar_WakeUp(&sChanged, ARBITRATION_SIGNAL_ALL);
+    LightLock_Unlock(&sLock);
 }
 
 static int tex(C3D_Tex *t, GPU_TEXCOLOR fmt) {
@@ -639,7 +656,7 @@ static void *sTexture3d;
 static const uint32_t *sPicture3d;
 static int sHash = -1;
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
-    pdisp_idle();  // (the last job's snapshot and 3D picture)
+    pdisp_wait(PDISP_COMP);  // (the last compositing's snapshot)
     sScreenRead[0] = sScreenRead[1] = 0;
     if (!sSnapGran[0][0])
         for (int e = 0; e < 2; e++)
@@ -649,7 +666,7 @@ void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
     bytes += sSnapBytes;
     if (++frames == 300 && getenv("ACWW_FPS")) fprintf(stderr, "pica: the snapshot %lu KB a frame\n", (unsigned long)(bytes / 300 / 1024));
     sTexture3d = texture3d, sPicture3d = picture3d;
-    pdisp_submit(frame_job, 0);
+    pdisp_submit(PDISP_COMP, frame_job, 0);
 }
 
 static void frame_job(void *arg) {

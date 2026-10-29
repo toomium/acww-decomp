@@ -71,6 +71,7 @@ extern u32 gG3Swaps;  // SWAP_BUFFERS done: gG3Render is set then
 
 // gpu3d_raster.c
 void g3_render(void);                    // gG3Render into the frame buffer
+void g3_render_wait(void);               // until the picture being drawn from gG3Render is done (the 3DS)
 const u32 *g3_frame_lines(void);
 int g3_raster_pixel_polygon(int x, int y);  // index into gG3Render.poly, -1 none
 void g3_raster_diagnostics(int on);
@@ -87,6 +88,7 @@ int g3p_init(void);
 // texture, g3p_picture, nothing read back)
 void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags);
 void *g3p_picture(void);  // the last picture drawn for the GPU's compositing (a C3D_Tex), NULL none
+void g3p_wait(void);  // until a picture being drawn (by the GPU thread) is done: before its list or textures change
 void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out);  // (gpu3d_raster.c)
 
 // feature census (gpu3d_geom.c)

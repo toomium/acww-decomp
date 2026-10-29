@@ -1221,6 +1221,7 @@ void gpu3d_frame(const uint8_t *const bank[9]) {
     if (sDispCnt & 128) g3_feature(F_FOG);
     if (sDispCnt & 0x4000) g3_feature(F_REAR_BITMAP);
     if (sFlushPending) {
+        g3_render_wait();  // (the list drawn from and its polygon RAM)
         do_swap();
         drain();
     }

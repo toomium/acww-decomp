@@ -20,6 +20,7 @@
 
 int g3p_init(void) { return 0; }
 void *g3p_picture(void) { return 0; }
+void g3p_wait(void) {}
 void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags) {
     (void)r, (void)img, (void)pal, (void)texChanged, (void)color, (void)depth, (void)flags;
 }
@@ -243,6 +244,7 @@ static void apply(const State *s, const G3RenderState *r) {
 static u32 rgb5_to_6(u32 c) { return c ? c * 2 + 1 : 0; }
 
 void *g3p_picture(void) { return sPicture >= 0 ? &sPic[sPicture] : 0; }
+void g3p_wait(void) { pdisp_wait(PDISP_3D); }
 
 // the fog's density (0-128) at depth z, as gpu3d_raster.c fog_pass
 static s32 fog_density(const G3RenderState *r, s32 z) {
@@ -264,20 +266,24 @@ static s32 fog_density(const G3RenderState *r, s32 z) {
 static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth,
                    u8 *flags);
 // for the compositing (color NULL): a job for the GPU thread (pica_display.c), which reads the list and the textures
-// until the game's thread waits for it; read back: at once
+// until the game's thread waits for it, into the picture chosen here (sPicture: the compositing jobs submitted
+// before it show the other one); read back: at once
 static struct { const G3RenderState *r; const u8 *img, *pal; int texChanged; } sJob;
+static int sJobPicture;
 static void render_job(void *arg) {
     (void)arg;
     render(sJob.r, sJob.img, sJob.pal, sJob.texChanged, 0, 0, 0);
 }
 void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags) {
-    pdisp_idle();
     if (color) {
+        pdisp_idle();
         render(r, img, pal, texChanged, color, depth, flags);
         return;
     }
+    pdisp_wait(PDISP_3D);
     sJob.r = r, sJob.img = img, sJob.pal = pal, sJob.texChanged = texChanged;
-    pdisp_submit(render_job, 0);
+    sPicture = sJobPicture = sPicture < 0 ? 0 : sPicture ^ 1;
+    pdisp_submit(PDISP_3D, render_job, 0);
 }
 
 static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth,
@@ -289,7 +295,7 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
     // a fog alpha of 0 exactly the DS's: the density then scales the alpha)
     int direct = color == 0, fogAlpha = direct && (r->dispcnt & 0xc0) == 0xc0;
     u32 fa = r->fogColor >> 16 & 31;
-    C3D_RenderTarget *target = direct ? sPicTarget[sPicture < 0 ? 0 : sPicture ^ 1] : sTarget;
+    C3D_RenderTarget *target = direct ? sPicTarget[sJobPicture] : sTarget;
     const float hy = direct ? 256.0f : (float)H;  // (the texture's rows: lines below 192 aren't drawn)
     if (texChanged) {
         track(img, sImgCopy, sImgVer, IMG_SIZE);
@@ -382,7 +388,6 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
     GSPGPU_FlushDataCache(sVerts, (u32)nv * sizeof(PVertex));
     if (direct) {  // (the GPU draws while the CPU goes on: the compositing waits for it)
         C3D_FrameEnd(0);
-        sPicture = sPicture < 0 ? 0 : sPicture ^ 1;
         return;
     }
     // the pictures back to linear memory (the transfers wait for the drawing before them, and for themselves)

@@ -596,6 +596,7 @@ void g3_render(void) {
     if (gG3Swaps == drawnSwaps && gG3VramGeneration == drawnGeneration && gG3VramGeneration != ~0u && !sDiag) return;
     drawnSwaps = gG3Swaps;
     drawnGeneration = gG3VramGeneration;
+    g3_render_wait();  // (the textures below)
     static int timing = -1;
     uint64_t t0 = 0;
     if (timing < 0) {
@@ -653,4 +654,5 @@ int gpu3d_pixel_polygon(int x, int y, Gpu3dPolyInfo *info) {
     return 1;
 }
 int gG3Diagnostics;
+void g3_render_wait(void) { if (sPica) g3p_wait(); }
 void gpu3d_set_diagnostics(int on) { sDiag = gG3Diagnostics = on; }
