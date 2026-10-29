@@ -614,3 +614,9 @@ the exheader can enable core 2 on the New 3DS (1.3).
   before the program ends, the home menu and sleep (pxi7.c `pxi7_save_flush`): one write instead of hundreds of
   page writes, each flushed. The PC's save script byte for byte (its save file too), Azahar's 6001 pictures and the
   sound exact.
+- 2026-10-29: open, left for later (the user): on hardware the sound still scratches with loud deep notes in the
+  title's music, also with the console's volume very low (so not the speakers' level) and with the DSP's clipping
+  normal (commit 264647a9). The mixed sound is the PC's byte for byte and never clips (peaks about 22000 of 32767
+  in the title). Not yet tried: headphones; `ACWW_VOLUME=50` (commit 55c2295a: the channel's mix, which acts before
+  the DSP's output stage); the PC build or a DS at the same place; the DSP's interpolation (`NDSP_INTERP_NONE` /
+  `POLYPHASE`) and a fixed rate (the queue level's rate changes every frame).
