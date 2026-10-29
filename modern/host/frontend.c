@@ -24,17 +24,27 @@ void frontend_init(const char *argv0) {
 AcwwShm *frontend_shm(void) { return sShm; }
 
 // scripted keys for headless runs: ACWW_KEYS="frame:frames:mask;..." (mask: the bits of AcwwShm.keys, hex)
+// (ACWW_KEYS read once: an input script is several KB, and reading it again every frame took much of a run's time)
 static u32 scripted_keys(void) {
-    static const char *spec;
-    if (!spec) spec = getenv("ACWW_KEYS") ? getenv("ACWW_KEYS") : "";
-    u32 f = (u32)host_frame(), k = 0;
-    for (const char *p = spec; *p;) {
-        unsigned fr, n, m;
-        if (sscanf(p, "%u:%u:%x", &fr, &n, &m) == 3 && f >= fr && f < fr + n) k |= m;
-        p = strchr(p, ';');
-        if (!p) break;
-        p++;
+    static struct { unsigned frame, frames, mask; } *keys;
+    static int n = -1;
+    if (n < 0) {
+        const char *spec = getenv("ACWW_KEYS") ? getenv("ACWW_KEYS") : "";
+        int cap = 1;
+        for (const char *p = spec; *p; p++) cap += *p == ';';
+        keys = malloc(cap * sizeof *keys);
+        n = 0;
+        for (const char *p = spec; *p && keys;) {
+            unsigned fr, len, m;
+            if (sscanf(p, "%u:%u:%x", &fr, &len, &m) == 3) keys[n].frame = fr, keys[n].frames = len, keys[n++].mask = m;
+            p = strchr(p, ';');
+            if (!p) break;
+            p++;
+        }
     }
+    u32 f = (u32)host_frame(), k = 0;
+    for (int i = 0; i < n; i++)
+        if (f >= keys[i].frame && f < keys[i].frame + keys[i].frames) k |= keys[i].mask;
     return k;
 }
 
