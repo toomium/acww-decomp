@@ -62,14 +62,14 @@ u32 gG3Swaps;
 void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
 static int sRaster = 1;
 void gpu3d_set_raster(int on) { sRaster = on; }
-// the wide view: the x and y clip planes at c = -num[0]/den w and c = num[1]/den w (1/1: the DS's)
+// the wide view: the x and y clip planes at +-num/den w (1/1: the DS's)
 static int sWide;
-static s64 sClipNum[3][2] = {{1, 1}, {1, 1}, {1, 1}}, sClipDen[3] = {1, 1, 1};
+static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
 int gpu3d_wide_wanted(void) { return getenv("ACWW_WIDE") && atoi(getenv("ACWW_WIDE")); }
 void gpu3d_set_wide(int on) {
     sWide = on;
-    sClipNum[0][0] = sClipNum[0][1] = on ? 128 + GPU3D_WIDE_X : 1, sClipDen[0] = on ? 128 : 1;
-    sClipNum[1][0] = on ? 96 : 1, sClipNum[1][1] = on ? 96 + GPU3D_WIDE_TOP : 1, sClipDen[1] = on ? 96 : 1;  // (+y: up)
+    sClipNum[0] = on ? 128 + GPU3D_WIDE_X : 1, sClipDen[0] = on ? 128 : 1;
+    sClipNum[1] = on ? 96 + GPU3D_WIDE_Y : 1, sClipDen[1] = on ? 96 : 1;
 }
 int gpu3d_wide(void) { return sWide; }
 
@@ -503,7 +503,7 @@ static void screen_position(G3Vertex *v) {
 // interpolated from the vertex inside
 static G3Vertex sClipBuf[2][10];
 static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, int comp, int sign) {
-    s64 num = sClipNum[comp][sign > 0], dn = sClipDen[comp];  // (the plane c = sign num/dn w; the DS's: 1/1)
+    s64 num = sClipNum[comp], dn = sClipDen[comp];  // (the plane c = sign num/dn w; the DS's: 1/1)
     s64 din = num * in->pos[3] - sign * dn * in->pos[comp];
     s64 dout = num * out->pos[3] - sign * dn * out->pos[comp];
     s64 den = din - dout;
@@ -544,7 +544,7 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
     o->screenDone = 0;
 }
 static int inside(const G3Vertex *v, int comp, int sign) {
-    s64 c = sClipDen[comp] * v->pos[comp], w = sClipNum[comp][sign > 0] * v->pos[3];
+    s64 c = sClipDen[comp] * v->pos[comp], w = sClipNum[comp] * v->pos[3];
     return sign > 0 ? c <= w : c >= -w;
 }
 static int clip_plane(G3Vertex *dst, const G3Vertex *src, int n, int comp, int sign) {

@@ -45,10 +45,9 @@ void gpu3d_vram_generation(uint32_t generation);
 // 0: gpu3d_frame runs the geometry engine's frame but doesn't draw the picture (a frame the screens skip)
 void gpu3d_set_raster(int on);
 // The wide view (the 3DS's ACWW_WIDE=1, an experiment): polygons kept beyond the DS's screen, clipped at a picture of
-// (256 + 2 * GPU3D_WIDE_X) x (192 + GPU3D_WIDE_TOP) with the DS's in its middle at the bottom (the game's text boxes
-// stay at the screen's bottom edge); their screen positions (hx, hy) then not wrapped (negative in the margins).
-// Only for a renderer that draws them there (gpu3d_pica.c's).
-enum { GPU3D_WIDE_X = 72, GPU3D_WIDE_TOP = 48 };
+// (256 + 2 * GPU3D_WIDE_X) x (192 + 2 * GPU3D_WIDE_Y) with the DS's in its middle; their screen positions (hx, hy)
+// then not wrapped (negative in the margins). Only for a renderer that draws them there (gpu3d_pica.c's).
+enum { GPU3D_WIDE_X = 72, GPU3D_WIDE_Y = 24 };
 int gpu3d_wide_wanted(void);  // ACWW_WIDE set
 void gpu3d_set_wide(int on);
 int gpu3d_wide(void);
