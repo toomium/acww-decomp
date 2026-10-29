@@ -64,7 +64,7 @@ void melon_3d_lines(uint32_t *out);
 int melon_3d_poly_count(void);
 int melon_3d_poly_get(int i, Gpu3dVertexOut *v, uint32_t *attr, uint32_t *texparam, uint32_t *texpal, int *flags);
 // hw.c
-void host_hblank(int line);
+int host_hblank(int line);
 // vram.c
 u8 *host_vram_bank(int i);
 void host_vram_flush(void);
@@ -596,10 +596,10 @@ static void render_timing(u64 t0, u64 t1, u64 t2, u64 t3) {
     }
 }
 
-static void render_hblank(int line, void *context) {
+static int render_hblank(int line, void *context) {
     (void)context;
     HOST_PROF(PROF_GAME);  // (the game's H-blank work)
-    host_hblank(line);
+    return host_hblank(line);
 }
 // ACWW_FRAMESKIP=<n>: the screens drawn every n + 1 frames (the 3DS's default: 1, every other one; elsewhere 0).
 // The game runs every frame as before - its H-blank work line by line, the geometry engine - only the pictures are

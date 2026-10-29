@@ -128,7 +128,8 @@ static void prof_sampler(void *arg) {
 static void prof_report(double frameMs) {
     static const char *const kNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
                                                "sound", "frontend", "pacing", "GPU wait", "lighting",
-                                               "vertices", "waiting for the GPU thread", "idle", "ROM"};
+                                               "vertices", "waiting for the GPU thread", "idle", "ROM",
+                                               "ARM7"};
     static u32 seen[2][PROF_N];
     for (int t = 0; t < 2; t++) {
         u32 n[PROF_N], total = 0;
@@ -592,8 +593,9 @@ void host_spend_cycles(u64 n) {
 // code's in which the frame happens to be drawn.
 static int sHBlankLine = -1;
 static u32 sPollAddr, sPollRepeat;  // (defined below, io_read_cost)
-void host_hblank(int line) {
-    if (!(R16(0x04000004) & 0x10) || !(R32(0x04000208) & 1) || !(R32(0x04000210) & 2)) return;
+// returns 0 if no handler ran (nothing in the game changed)
+int host_hblank(int line) {
+    if (!(R16(0x04000004) & 0x10) || !(R32(0x04000208) & 1) || !(R32(0x04000210) & 2)) return 0;
     u16 st = R16(0x04000004), vcount = R16(0x04000006);
     u32 pollAddr = sPollAddr, pollRepeat = sPollRepeat, timeless = sTimeless;
     sHBlankLine = line;
@@ -602,6 +604,7 @@ void host_hblank(int line) {
     sPollAddr = pollAddr, sPollRepeat = pollRepeat, sTimeless = timeless;
     R16(0x04000004) = st;
     R16(0x04000006) = vcount;
+    return 1;
 }
 static void io_read(u32 a) {
     if (sHBlankLine >= 0 && (a & ~3u) == 0x04000004) {

@@ -66,8 +66,9 @@ typedef struct Gpu2dFrameInput {
     // red bits 0-5, green 8-13, blue 16-21, alpha 24-28 (0-31; 0: no pixel), not scrolled; NULL: no 3D picture
     const uint32_t *lines3d;
     // called after each visible line (0-191) of both engines, the H-blank: register writes (gpu2d_write*) and
-    // palette changes made there show from the next line on (NULL: none)
-    void (*hblank)(int line, void *context);
+    // palette changes made there show from the next line on (NULL: none); it returns 0 if nothing ran there that
+    // could change the palettes or OAM
+    int (*hblank)(int line, void *context);
     void *hblankContext;
     // 1: the 3D layer is composited by the caller (lines3d NULL; the GPU: gpu2d_deferred), not here
     int defer3d;

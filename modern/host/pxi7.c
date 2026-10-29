@@ -35,6 +35,7 @@ u64 pxi7_next_due(void) {
     return d;
 }
 void pxi7_run_due(void) {
+    HOST_PROF(PROF_ARM7);
     for (int i = 0; i < sLaterCount;) {
         if (sLater[i].due <= host_cycles()) { u32 w = sLater[i].word; sLater[i] = sLater[--sLaterCount]; pxi7_send(w); }
         else i++;
@@ -66,6 +67,7 @@ void pxi7_prepare_read(u32 a) {
 }
 
 void pxi7_sync_written(u32 value) {
+    HOST_PROF(PROF_ARM7);
     // the start-up handshake (PXI_InitFifo): the ARM7 answers each value with the next one
     sArm7Sync = ((value >> 8) + 1) & 0xf;
 }
@@ -448,7 +450,10 @@ static void service(u32 tag, u32 data, u32 err) {
     }
 }
 
-void pxi7_receive(u32 word) { service(word & 31, word >> 6, word >> 5 & 1); }
+void pxi7_receive(u32 word) {
+    HOST_PROF(PROF_ARM7);
+    service(word & 31, word >> 6, word >> 5 & 1);
+}
 
 void pxi7_init(void) {
     const char *t = getenv("ACWW_TOUCH");

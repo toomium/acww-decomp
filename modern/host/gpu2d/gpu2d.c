@@ -726,10 +726,10 @@ static void record_start(const Gpu2dFrameInput *in) {
     r->changes = 0;
     for (int n = 0; n < 2; n++) r->obj0[n] = sEngine[n].objNextLine0, r->haveObj0[n] = sEngine[n].haveNextLine0;
 }
-static void record_changes(const Gpu2dFrameInput *in) {
+__attribute__((noinline)) static void record_changes(const Gpu2dFrameInput *in) {  // (its loop gets the registers)
     Record *r = &sRecord[sRecording];
     for (u32 part = 0; part < 2; part++) {
-        const u32 *now = (const u32 *)(part ? in->oam : in->palette);
+        const u32 *now = (const u32 *)(part ? in->oam : in->palette);  // (both 0x800-aligned: host_mem.h)
         u32 *was = sShadow + part * 0x200;
         for (u32 i = 0; i < 0x200; i += 8) {
             if (!((now[i] ^ was[i]) | (now[i + 1] ^ was[i + 1]) | (now[i + 2] ^ was[i + 2]) | (now[i + 3] ^ was[i + 3]) |
@@ -860,8 +860,8 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
             else gpu2d_render_obj_line(e, line, &e->obj);
             render_line(e, in, line);
         }
-        if (in->hblank) in->hblank(line, in->hblankContext);
-        if (sDeferLayers) record_changes(in);
+        int ran = in->hblank ? in->hblank(line, in->hblankContext) : 0;
+        if (sDeferLayers && ran) record_changes(in);
         else if (sGpu) gpu_versions(in);
         for (int n = 0; n < 2; n++) {  // the internal reference points: the next line's
             Engine *e = &sEngine[n];

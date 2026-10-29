@@ -12,6 +12,7 @@ enum {
     PROF_WAIT,  // waiting for the GPU thread (the 3DS: pica_display.c)
     PROF_IDLE,  // (the GPU thread's marker: nothing to do)
     PROF_ROM,   // reading the ROM (card.c: from the file, through its cache)
+    PROF_ARM7,  // the ARM7's side: its services (pxi7.c: files, the save, the clock), the wireless (wm7.c)
     PROF_N
 };
 extern volatile int gHostProf;
