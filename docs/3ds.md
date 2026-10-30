@@ -723,3 +723,10 @@ the exheader can enable core 2 on the New 3DS (1.3).
   `quick` captures still hold; its `play` captures (they pass the taxi at about frame 4300) and the RAM hash file of
   the play run are to be recorded again (none of them are on this machine). Azahar's `acww.cfg` still holds the old
   save script, which is the same up to its exit frame 12000. On hardware it works (the user: "funktioniert").
+- 2026-10-30: the reference captures recorded again after the isAnimFinished fix, from the x86-64 build (GCC 14) at
+  commit 4af96d3e: `ORACLE_DIR=$HOME/acww-ref tools/host_oracle.sh build/host64_usa/acww record` (into
+  `~/acww-ref/captures_v3`); `quick` and `play` pass against them. The script refuses to record while `$ORACLE_DIR`
+  doesn't exist yet (`readlink -f` gives nothing for both of its paths): `mkdir -p ~/acww-ref` first. The play run's
+  RAM hash file is `~/acww-ref/play.ramhash`, written with `ACWW_RUNNER="setarch -R"`: on x86-64 the RAM holds host
+  addresses, so with address randomisation two runs of the same binary differ from frame 0; without it they are byte
+  for byte the same. It compares only with runs of the same binary (or one of the same code layout) made that way.
