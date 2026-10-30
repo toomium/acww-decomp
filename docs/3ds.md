@@ -707,3 +707,19 @@ the exheader can enable core 2 on the New 3DS (1.3).
 - 2026-10-29, next (the user): an experiment on its own branch, `3ds-real-port` (from `3ds`): a "real" port, the
   game's code adapted to the 3DS directly instead of the DS's hardware rebuilt beneath it. Its plan is
   `docs/3ds-real-port.md` on that branch; this branch and its rules stay as they are.
+- 2026-10-30: the game froze when Mr. Resetti began to talk (the user, on hardware). On the PC too, so a bug in the
+  shared code: `NpcAnimCtrl::isAnimFinished` read the start of the NPC's model as its AnimFrameCtrl (a bug upstream
+  kept because the reference captures have it); the DS reads the model's AnimFrameCtrl base (NpcActor + 0x188, as in
+  the older decompiled code). A play-once animation never ended, so Resetti stayed in act 4 after popping out of the
+  ground, with the player frozen. Fixed (commit a0f61d66): on the PC he pops up, talks through his lecture (A every
+  second, about 8000 frames), goes back underground (act 5, the visit flag cleared, the actor deleted), and the
+  player walks again.
+  Reproduced with the save script's save, a continue quit without saving, then a continue with
+  `ACWW_TEST_JOB_DONE=1` and PlayerData flag 0x23 cleared (set until Nook's intro talk on a later day; Resetti
+  doesn't come while it is set) and a few steps in front of the house (he waits underground until the player is on
+  one of five tiles there). The attract demo (12000 frames, pictures and sound) is byte for byte the build before's;
+  from Kapp'n's taxi on the scripted runs change (his animations end as on a DS, and the new town comes out
+  different), so the play scripts' walks were redone (commit ded7d237; the wireless gate test passes). The oracle's
+  `quick` captures still hold; its `play` captures (they pass the taxi at about frame 4300) and the RAM hash file of
+  the play run are to be recorded again (none of them are on this machine). Azahar's `acww.cfg` still holds the old
+  save script, which is the same up to its exit frame 12000. Checked on the PC only, not yet in Azahar or on hardware.

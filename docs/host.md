@@ -497,8 +497,8 @@ matching build and with the i386 build's screenshots and sound staying bit-ident
   at 24000-24240 every 60 (into the house), Down at 24900 (back out: Tom Nook), A every 60 frames 25300-31840 (his
   talk), Start at 32300 and A at 32500, 32700, ..., 33500 (Save and end; "Come back and see us again" at ~32750), the
   title at ~34500. `continue` (A every 60 frames from 2400 with that save file): the greeting, the player waking up in
-  the house, in front of the house in town from ~4300. Under `ACWW_TIMING=legacy` the earlier i386 script still
-  applies (A and Start to 21050, Down 21100-21500, the walk 23200:60:80 23300:200:10 23520:220:80 23750:620:10
+  the house, in front of the house in town from ~4300. Under `ACWW_TIMING=legacy` the earlier i386 script
+  applied before the isAnimFinished fix (since then **unverified**: the fix changes that town too) (A and Start to 21050, Down 21100-21500, the walk 23200:60:80 23300:200:10 23520:220:80 23750:620:10
   24380:120:80 24510:400:10 24970:175:40 25150:64:10 25220:100:40 25330:14:20 25350:150:40 to the door at (151, 109), A
   at 25700-25940, 26600:150:80, A 27000-33540, Start 34000, A 34200-35200: the save at 34786-34907). With
   `ACWW_RTC="2026-10-08 18:30:00"` the continue shows 10/8 (Thursday) 6:30 PM, the evening sky and the weeds of the
