@@ -722,4 +722,4 @@ the exheader can enable core 2 on the New 3DS (1.3).
   different), so the play scripts' walks were redone (commit ded7d237; the wireless gate test passes). The oracle's
   `quick` captures still hold; its `play` captures (they pass the taxi at about frame 4300) and the RAM hash file of
   the play run are to be recorded again (none of them are on this machine). Azahar's `acww.cfg` still holds the old
-  save script, which is the same up to its exit frame 12000. Checked on the PC only, not yet in Azahar or on hardware.
+  save script, which is the same up to its exit frame 12000. On hardware it works (the user: "funktioniert").
