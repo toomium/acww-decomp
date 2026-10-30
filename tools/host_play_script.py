@@ -48,10 +48,9 @@ def town():
 
 def save():
     keys, touch = town()
-    # from in front of the town hall (145, 56): south past a tree, over the bridge, west along the river's south bank,
-    # around the house's south-east corner to its door at (81, 109) (ACWW_POSLOG positions)
-    keys += [(22400, 100, DOWN), (22550, 30, RIGHT), (22600, 380, DOWN), (23000, 400, LEFT), (23420, 200, DOWN),
-             (23630, 165, LEFT), (23820, 150, UP)]
+    # from in front of the town hall (113, 56): south past the house's west side, east along its front to its door at
+    # (119, 109) (ACWW_POSLOG positions)
+    keys += [(22400, 545, DOWN), (23000, 65, RIGHT), (23120, 150, UP)]
     keys += every(24000, 24241, 60, 6, A)      # opens the door
     keys += [(24900, 150, DOWN)]               # back out
     keys += every(25300, 31841, 60, 6, A)      # Tom Nook's talk
@@ -82,11 +81,12 @@ def moves(frame, seq):
     return keys
 
 
-# from in front of the player's house (81, 110): around it to the west, north past the trees, east to the gate house
-# at (80, 33), in, up to the inner doors (16, 17) and right to Copper
-TO_COPPER = [('S', 100), ('L', 150), ('U', 520), ('R', 80), ('U', 500), ('R', 20), ('U', 200), ('W', 300),
-             ('U', 60), ('W', 50), ('U', 60), ('W', 50), ('U', 60), ('W', 50), ('U', 60), ('S', 10), ('R', 40),
-             ('W', 30)]
+# from in front of the player's house (119, 110), once the player is in town: west, north past the town hall's west
+# side, around the trees to the north cliff, west to the gate house at (80, 33), in, up to the inner doors (16, 17) and
+# right to Copper
+TO_COPPER = [('W', 400), ('L', 80), ('U', 480), ('L', 170), ('U', 220), ('L', 140), ('U', 200), ('S', 50), ('L', 120),
+             ('U', 200), ('W', 300), ('U', 60), ('W', 50), ('U', 60), ('W', 50), ('U', 60), ('W', 50), ('U', 60),
+             ('S', 10), ('R', 40), ('W', 30)]
 
 
 def gate_host():

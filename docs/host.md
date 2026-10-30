@@ -490,13 +490,14 @@ matching build and with the i386 build's screenshots and sound staying bit-ident
   the game reaches each point sooner and makes a different town (its random seeds come from the clock): `town` - the
   touch at (128,96) at 2200, A every 60 frames from 2400 and Start every 60 from 7650 to 21050, a touch at (218,180)
   every 600 frames from 7630 (the name entries; the town at ~12000, Kapp'n's warp to the town hall), then B every 60
-  frames to 21700 (closes Pelly's last talk) and Down 21800-22200: out of the town hall in front of it at (145, 56),
-  frame ~22150. `save` adds the walk to the house (Down 100 frames, past a tree with Right 30, Down 380 over the
-  bridge, Left 400 along the river's south bank, Down 200, Left 165, Up 150: the door at (81, 109), frame ~23900), A
+  frames to 21700 (closes Pelly's last talk) and Down 21800-22200: out of the town hall in front of it at (113, 56),
+  frame ~22150. `save` adds the walk to the house (Down 545 frames past the house's west side, Right 65, Up 150: the
+  door at (119, 109), frame ~23250; the town and the walk since `NpcAnimCtrl::isAnimFinished` was fixed, which
+  changed Kapp'n's animations and with them the random numbers the new town is made from), A
   at 24000-24240 every 60 (into the house), Down at 24900 (back out: Tom Nook), A every 60 frames 25300-31840 (his
   talk), Start at 32300 and A at 32500, 32700, ..., 33500 (Save and end; "Come back and see us again" at ~32750), the
   title at ~34500. `continue` (A every 60 frames from 2400 with that save file): the greeting, the player waking up in
-  the house, in front of the house in town from ~4500. Under `ACWW_TIMING=legacy` the earlier i386 script still
+  the house, in front of the house in town from ~4300. Under `ACWW_TIMING=legacy` the earlier i386 script still
   applies (A and Start to 21050, Down 21100-21500, the walk 23200:60:80 23300:200:10 23520:220:80 23750:620:10
   24380:120:80 24510:400:10 24970:175:40 25150:64:10 25220:100:40 25330:14:20 25350:150:40 to the door at (151, 109), A
   at 25700-25940, 26600:150:80, A 27000-33540, Start 34000, A 34200-35200: the save at 34786-34907). With
