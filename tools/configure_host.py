@@ -84,6 +84,9 @@ parser.add_argument("--sanitize", default="",
                          "the game's own heaps poisoned where unallocated, include/host_asan.h), bounds (array indexes "
                          "against the declared size, also arrays inside structs) and undefined (the rest of UBSan); "
                          "every report recovers (the run goes on), docs/host.md")
+parser.add_argument("--direct", action="store_true",
+                    help="--os 3ds: the enhanced port (docs/3ds-real-port.md; a separate build: suffix _direct): "
+                         "N3DS_DIRECT defined, the hardware model replaced where it has been")
 parser.add_argument("--regen-gen", action="store_true",
                     help="regenerate modern/gen/gaps.c from the DS build's delinking (build/usa/delinks)")
 parser.add_argument("version", nargs="?", default="usa")
@@ -101,6 +104,10 @@ if N3DS:
     if not os.path.exists(f"{DKA}/bin/arm-none-eabi-gcc") or not os.path.exists(f"{DKP}/libctru/lib/libctru.a"):
         sys.exit(f"--os 3ds: no devkitARM and libctru in {DKP} (DEVKITPRO, DEVKITARM; `dkp-pacman -S 3ds-dev`)")
     args.cc = f"{DKA}/bin/arm-none-eabi-gcc"
+    if args.direct and not args.suffix:
+        args.suffix = "_direct"
+elif args.direct:
+    sys.exit("--direct: --os 3ds only")
 if MAC:
     if args.guards or args.oracle:
         sys.exit("--os macos: no --guards or --oracle (GNU ld / melonDS builds)")
@@ -226,6 +233,8 @@ if MAC:
     CXX_FLAGS += " -Xclang -mconstructor-aliases"
 if args.extra_cflags:
     GAME_FLAGS += " " + args.extra_cflags
+if args.direct:
+    GAME_FLAGS += " -DN3DS_DIRECT"
 # the sanitizer variant: the game, the runtime and the link with the same -fsanitize options; HOST_ASAN tells the
 # runtime's stack switches (coro.c) and the game's heaps (include/host_asan.h) to annotate for ASan
 SAN_FLAGS = ""
@@ -296,6 +305,9 @@ elif N3DS:
                   f"-I{DKP}/libctru/include -DHOST_DEBUG_POSIX=0 -fno-short-enums" + FRONTEND_FLAG)
     LINK_FLAGS = f"{M_FLAG} -specs=3dsx.specs -L{DKP}/libctru/lib -Wl,--no-enum-size-warning,--no-wchar-size-warning"
     HOST_CXX_FLAGS = f"{M_FLAG} -O1 -g -std=c++17 -DHOST"
+    if args.direct:
+        HOST_FLAGS += " -DN3DS_DIRECT"
+        HOST_CXX_FLAGS += " -DN3DS_DIRECT"
     MELON_LIBS = ""
 elif A64:
     # the cross toolchain's glibc; melonDS's core cross-built for aarch64 (build-core-a64: without the JIT and the GDB
