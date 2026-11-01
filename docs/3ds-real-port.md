@@ -240,8 +240,10 @@ every frame, or pictures interpolated between the game's (needs R1).
   compositing 8-9 ms: core 0 is the limit now. Two frames of 9.6 s (frames 6001 and 12121; the user: once while Mr.
   Resetti talked, once while saving, the second text box late), all of it in `game`, the watchdog saying virtual
   time didn't move (no register access or wait). Not reproduced: the plain PC build through the save script's save
-  (frame 33000) reports no spin. Suspected, **unverified**: the save path (a 256-byte page at a time through the
-  ARM7, each waiting for a reply that needs virtual time to pass). The user's choice: the files and the save next.
+  (frame 33000) reports no spin. Both are the frame right after an `ACWW_FPS` report (every 120 frames: 6001 =
+  50 x 120 + 1, 12121 = 101 x 120 + 1), whose lines go to the SD card on the game's thread, after a save, whose file
+  is written on the game's thread too (a host file write moves no virtual time: the watchdog's message). Suspected,
+  **unverified**: an SD card write that stalls after the save's. The user's choice: the files and the save next.
 - 2026-11-01: R3, files and the save at the SDK level (commit 464d1cda): the save memory's stream commands and the
   ROM reads done at once in the host, the ROM image read ahead in the background. The game's whole save path is
   Backup_Read/Write(Async) (src/main/unk_0204fe7c.cpp) over one SDK function, CARDi_RequestStreamCommand; an async
@@ -252,3 +254,8 @@ every frame, or pictures interpolated between the game's (needs R1).
   checksum). Azahar: frames 1200, 2400 and 5000 pixel for pixel the build before's. The first big load (frame 183)
   in Azahar 1330 -> 1270 ms; its "registers" part (about 550 ms) is not the card: next to look at. Whether the 9.6 s
   frames are gone needs the user's hardware run (the same places: Mr. Resetti, a save).
+- 2026-11-01: the save file's write in the background (the direct build) and a report of slow SD writes (every
+  build: a save write over 50 ms, an `ACWW_FPS` report over 100 ms). Checked on the PC: the continue script's
+  writes in the background give the file of writing at once. Continuing from a save through the SDK-level reads
+  (the PC, the continue script on the save script's file): the same town and house, the text a few frames earlier.
+  For the user's next run: the same places (Mr. Resetti, a save); the log then says which write was slow, if one is.
