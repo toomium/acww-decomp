@@ -55,6 +55,11 @@ void host_irq_call(int bit);  // os.c: one interrupt handler at once (the H-blan
 void host_advance_to_next_event(void);
 u64 host_frame(void);
 u64 host_cycles(void);
+// a background thread (hw.c; another core: the 3DS's core 2 or 1) that ends when host_threads_quitting says so,
+// calling host_thread_stopped: the program's end waits for it (the 3DS frees the threads' stacks)
+int host_thread_start(void (*fn)(void *), void *arg, int otherCore);
+int host_threads_quitting(void);
+void host_thread_stopped(void);
 void host_spend_cycles(u64 n);  // a busy wait of n cycles (hw.c; nothing with ACWW_TIMING=legacy)
 
 // os.c

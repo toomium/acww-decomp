@@ -51,17 +51,16 @@ static void open_audio(void) {
 // ran dry, nothing is queued until three buffers are waiting (else every buffer arrives just in time: crackles).
 // (As frontend_sdl.c's audio_callback.)
 #define AUDIO_TARGET (2.5 * WAVE_FRAMES)
+static unsigned sDry;  // (ACWW_FPS: how often the DSP's queue ran dry, every 120 frames: frontend_backend_frame)
 static void feed_audio(AcwwShm *shm) {
     if (!sWaveData) return;
     static int primed;
-    static unsigned dry, calls;  // (ACWW_FPS: how often the DSP's queue ran dry, every 120 frames)
     uint32_t r = shm->audio_read, w = __atomic_load_n(&shm->audio_write, __ATOMIC_ACQUIRE);
     if (w - r > ACWW_AUDIO_FRAMES / 2) r = w - 3 * WAVE_FRAMES;  // far behind (a stall): skip ahead
     int queued = 0;
     for (int i = 0; i < WAVE_BUFS; i++) queued += sWave[i].status == NDSP_WBUF_QUEUED || sWave[i].status == NDSP_WBUF_PLAYING;
-    if (!queued && primed) dry++;
+    if (!queued && primed) sDry++;
     if (!queued) primed = 0;
-    if (++calls % 120 == 0 && getenv("ACWW_FPS")) fprintf(stderr, "sound: the DSP's queue ran dry %u times\n", dry);
     if (!primed && w - r < 3 * WAVE_FRAMES) goto done;
     primed = 1;
     double err = ((double)(w - r) + queued * WAVE_FRAMES - (queued ? ndspChnGetSamplePos(0) : 0) - AUDIO_TARGET) / AUDIO_TARGET;
@@ -80,6 +79,31 @@ static void feed_audio(AcwwShm *shm) {
 done:
     __atomic_store_n(&shm->audio_read, r, __ATOMIC_RELEASE);
 }
+
+#ifdef N3DS_DIRECT
+// The enhanced port (docs/3ds-real-port.md R2): the sound's thread (snd7/driver.c) feeds the DSP itself as it mixes,
+// so that the sound goes on while the game's thread is held up; the frames waiting to be played (the ring and the
+// DSP's queue). Without the DSP (no firmware, ACWW_MUTE) the ring is played away in real time.
+int frontend_audio_pump(void) {
+    AcwwShm *shm = &sShm;
+    if (!sWaveData) {
+        static u64 last;
+        u64 now = svcGetSystemTick();
+        u32 w = __atomic_load_n(&shm->audio_write, __ATOMIC_ACQUIRE), r = shm->audio_read;
+        u64 played = last ? (now - last) * ACWW_AUDIO_RATE / SYSCLOCK_ARM11 : 0;
+        if (played) last = now;
+        else if (!last) last = now;
+        r = played >= w - r ? w : r + (u32)played;
+        __atomic_store_n(&shm->audio_read, r, __ATOMIC_RELEASE);
+        return (int)(w - r);
+    }
+    feed_audio(shm);
+    int queued = 0;
+    for (int i = 0; i < WAVE_BUFS; i++) queued += sWave[i].status == NDSP_WBUF_QUEUED || sWave[i].status == NDSP_WBUF_PLAYING;
+    u32 w = __atomic_load_n(&shm->audio_write, __ATOMIC_ACQUIRE);
+    return (int)(w - shm->audio_read) + queued * WAVE_FRAMES - (queued ? (int)ndspChnGetSamplePos(0) : 0);
+}
+#endif
 
 // ---- picture: the framebuffers are BGR8 and turned by 90 degrees (column-major, 240 pixels a column, bottom up)
 static void show(gfxScreen_t screen, const uint32_t *px) {
@@ -144,7 +168,11 @@ void frontend_backend_frame(AcwwShm *shm) {
         gfxFlushBuffers();
         gfxSwapBuffers();
     }
+#ifndef N3DS_DIRECT  // (the enhanced port: the sound's thread feeds the DSP, frontend_audio_pump)
     feed_audio(shm);
+#endif
+    static unsigned frames;
+    if (sWaveData && ++frames % 120 == 0 && getenv("ACWW_FPS")) fprintf(stderr, "sound: the DSP's queue ran dry %u times\n", sDry);
 }
 
 void frontend_backend_close(void) {

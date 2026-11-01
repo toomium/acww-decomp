@@ -108,6 +108,9 @@ static int thread_start(void (*fn)(void *), void *arg, int sampler) {
     thread_stopped();
     return 0;
 }
+int host_thread_start(void (*fn)(void *), void *arg, int otherCore) { return thread_start(fn, arg, otherCore); }
+int host_threads_quitting(void) { return threads_quitting(); }
+void host_thread_stopped(void) { thread_stopped(); }
 static void threads_stop(void) {
     __atomic_store_n(&sThreadsQuit, 1, __ATOMIC_RELEASE);
     for (int i = 0; i < 50 && __atomic_load_n(&sThreadsRunning, __ATOMIC_ACQUIRE); i++) host_plat_sleep_ms(5);
