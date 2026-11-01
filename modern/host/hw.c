@@ -459,6 +459,8 @@ static void run_events_body(void) {
                 slowest = 0;
                 prof_slowest_report();
                 prof_report((double)(now - last) / 120e6);
+                double ms = (double)(host_plat_time_ns() - now) * 1e-6;  // (the report's writes: the 3DS's SD card)
+                if (ms > 100) fprintf(stderr, "host: the report above took %.0f ms to write\n", ms);
             } else if (!thread_start(prof_sampler, 0, 1)) {
                 fprintf(stderr, "host: no thread for ACWW_FPS's profile\n");
             }

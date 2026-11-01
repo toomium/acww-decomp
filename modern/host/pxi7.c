@@ -295,7 +295,32 @@ static void save_store(u32 at, u32 len) {
     if (at + len > sDirtyHi) sDirtyHi = at + len;
     sFlushAt = host_frame() + 30;
 }
+// (a write that takes long is reported: on the 3DS one may hold the game up)
+static void save_file_write(u32 at, const u8 *data, u32 len) {
+    uint64_t t0 = host_plat_time_ns();
+    fseek(sSaveFile, (long)at, SEEK_SET);
+    fwrite(data, 1, len, sSaveFile);
+    fflush(sSaveFile);
+    double ms = (double)(host_plat_time_ns() - t0) * 1e-6;
+    if (ms > 50) fprintf(stderr, "pxi7: the save file's %u bytes written in %.0f ms\n", len, ms);
+}
+#ifdef N3DS_DIRECT
+// The enhanced port (docs/3ds-real-port.md R3): the flush 30 frames after the last change writes in the background
+// (pxi7_vblank), the changed range copied first, one write at a time; the others (the program's end, the home menu,
+// sleep) wait for it and write at once.
+static u8 *sPending;
+static u32 sPendingAt, sPendingLen;
+static int sWriting;
+static void write_job(void *arg) {
+    (void)arg;
+    save_file_write(sPendingAt, sPending, sPendingLen);
+    __atomic_store_n(&sWriting, 0, __ATOMIC_RELEASE);
+}
+#endif
 void pxi7_save_flush(void) {
+#ifdef N3DS_DIRECT
+    while (__atomic_load_n(&sWriting, __ATOMIC_ACQUIRE)) host_plat_sleep_ms(1);
+#endif
     if (sDirtyLo >= sDirtyHi || !sSavePath) return;
     u32 at = sDirtyLo, len = sDirtyHi - sDirtyLo;
     sDirtyLo = ~0u, sDirtyHi = 0;
@@ -307,9 +332,7 @@ void pxi7_save_flush(void) {
     long have = ftell(sSaveFile);
     if (have >= 0 && have < (long)sSaveSize)  // a new or short file: complete it with the memory's rest first
         fwrite(sSave + have, 1, sSaveSize - (u32)have, sSaveFile);
-    fseek(sSaveFile, (long)at, SEEK_SET);
-    fwrite(sSave + at, 1, len, sSaveFile);
-    fflush(sSaveFile);
+    save_file_write(at, sSave + at, len);
 }
 
 // one request on the save memory: a card address and ARM9 memory, the card's result code (0 OK)
@@ -402,6 +425,22 @@ static void tp_command(u32 data) {
 }
 
 void pxi7_vblank(void) {
+#ifdef N3DS_DIRECT
+    // (in the background when the file is there whole; a write still going: at a later frame)
+    int writing = __atomic_load_n(&sWriting, __ATOMIC_ACQUIRE);
+    if (sDirtyLo < sDirtyHi && host_frame() >= sFlushAt && sSaveFile && !writing) {
+        fseek(sSaveFile, 0, SEEK_END);
+        u8 *p = ftell(sSaveFile) >= (long)sSaveSize ? realloc(sPending, sDirtyHi - sDirtyLo) : 0;
+        if (p) {
+            sPending = p, sPendingAt = sDirtyLo, sPendingLen = sDirtyHi - sDirtyLo;
+            memcpy(sPending, sSave + sPendingAt, sPendingLen);
+            sDirtyLo = ~0u, sDirtyHi = 0;
+            __atomic_store_n(&sWriting, 1, __ATOMIC_RELEASE);
+            if (!host_plat_thread_start(write_job, 0)) write_job(0);
+        }
+    }
+    if (!writing)
+#endif
     if (sDirtyLo < sDirtyHi && host_frame() >= sFlushAt) pxi7_save_flush();
     if (sTpAuto && sCount == 0) { tp_sample(); pxi7_send(6 | (16u << 8) << 6); }
 }
