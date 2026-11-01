@@ -18,7 +18,7 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 | Subsystem | Now | What is still rebuilt | Cost | Next |
 |---|---|---|---|---|
 | 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4, core 2 about 2 (textures, batches), GPU 1.3 | lighting and transform in the vertex shader (R1) |
-| 2D | LLE; compositing on the PICA | the whole 2D engine: registers, VRAM, OAM, palettes; every line recorded (core 0) and rebuilt (core 2); windows and blending as on a DS (stencil passes) | core 0 3.8, core 2 6.3 + 4.1, GPU 8.6 | HLE (commands): R4 |
+| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures (as before); all drawn on the PICA | the per-line record on core 0 (the registers each line, the 2D VRAM banks copied each frame, the H-blank palette changes); the per-line state for the effects | core 0 about 5 (Azahar), core 2 1.3 (start) / 5.6 (name entry) in Azahar | the record on core 0: VRAM not copied whole every frame |
 | Sound | LLE | the ARM7 sequencer and the SPU's 16 channels mixed on the CPU, one stream to ndsp | core 0 about 1.2; crackles when frames are slow | HLE (commands): the channels on ndsp, R2 |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
 | Files, ROM, save | LLE | card reads and the ARM7's services | loads 0.3-1.5 s, slow frames when saving | HLE (SDK): FS by name, R3 |
@@ -214,3 +214,20 @@ every frame, or pictures interpolated between the game's (needs R1).
   To be measured on hardware (the GPU's compositing time, frameskip 0). Next candidates: the window regions' four
   passes only on their lines; core 2's 2D (6.9 ms: the OBJs, each line looking at all 128 OAM entries, the CPU's
   BGs); then R2 (sound on ndsp: notes keep playing through a slow frame, as on a DS).
+- 2026-11-01: the user's run with frameskip 0 after the compositing changes (1540f52e): about 55 game frames a second
+  (was 44), the GPU's compositing 8.6 ms a composited frame (was 13-14), core 2 waiting for the GPU 2.3 ms (was 7.9),
+  core 0 waiting for core 2 3-5 ms (was 8.2). Core 2 then the limit with its CPU work (2D 6.3, compositing 4.1, the
+  3D job 2.0-2.7). The status table (top of this file) added at the user's request.
+- 2026-11-01: R4, the 2D as HLE. What the game uses of the 2D engines (the PC build, the save script's 12000 frames,
+  `ACWW_RENDERER3D=own ACWW_GPU2D_FEATURES=1`): BG modes 0 and 1, text BGs in 16 colours, affine BGs (engine B), OBJs
+  with 2D tile mapping, windows 0 and 1, the OBJ window (engine B, from frame 4750: the name entry), alpha blending,
+  brightness up and down. No extended BGs, bitmaps, 256-colour or extended-palette OBJs, mosaic, semi-transparent
+  OBJs. So every BG was the GPU's already; the CPU's 2D work was the OBJs and the windows, line by line. Three steps,
+  each pixel for pixel the build before's at frames 1200, 2400 and 5000 (Azahar, the save script, frameskip 0):
+  (1) the OBJs as sprites (commit b6311624): each shown OBJ's box decoded once a frame into an atlas and drawn as a
+  quad; core 2's 2D at the start (frames 480-2640) 14.4 -> 2.3 ms a frame, the name entry 34.5 -> 22.2. (2) The
+  windows' regions from their shapes (commit 78d70a79): rectangles per run of lines and the OBJ-window OBJs' sprites
+  into the stencil, no line's OBJs drawn at all: 2.3 -> 1.3, the name entry 22.2 -> 16.7. (3) A plain OBJ decoded a
+  tile row at a time: the name entry 16.7 -> 5.6. Azahar's frames a second (unpaced, core 0
+  bound now): the start 39.9 -> 47.3, the name entry 26.9 -> 86.4. Not measured on hardware yet. Next: core 0's 2D
+  record (about 5 ms in Azahar: the 2D VRAM banks copied every frame, the registers every line), then R2.
