@@ -18,7 +18,7 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 | Subsystem | Now | What is still rebuilt | Cost | Next |
 |---|---|---|---|---|
 | 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4, core 2 about 2 (textures, batches), GPU 1.3 | lighting and transform in the vertex shader (R1) |
-| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures (as before); all drawn on the PICA | the per-line record on core 0 (the registers each line, the 2D VRAM banks copied each frame, the H-blank palette changes); the per-line state for the effects | core 0 about 5 (Azahar), core 2 1.3 (start) / 5.6 (name entry) in Azahar | the record on core 0: VRAM not copied whole every frame |
+| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures (as before); all drawn on the PICA | the per-line record on core 0 (the registers each line, the 2D VRAM banks copied each frame, the H-blank palette changes); the per-line state for the effects | Azahar, not yet the New 3DS: core 0 about 5, core 2 1.3 (start) / 5.6 (name entry) | the record on core 0: VRAM not copied whole every frame |
 | Sound | LLE | the ARM7 sequencer and the SPU's 16 channels mixed on the CPU, one stream to ndsp | core 0 about 1.2; crackles when frames are slow | HLE (commands): the channels on ndsp, R2 |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
 | Files, ROM, save | LLE | card reads and the ARM7's services | loads 0.3-1.5 s, slow frames when saving | HLE (SDK): FS by name, R3 |
@@ -231,3 +231,7 @@ every frame, or pictures interpolated between the game's (needs R1).
   tile row at a time: the name entry 16.7 -> 5.6. Azahar's frames a second (unpaced, core 0
   bound now): the start 39.9 -> 47.3, the name entry 26.9 -> 86.4. Not measured on hardware yet. Next: core 0's 2D
   record (about 5 ms in Azahar: the 2D VRAM banks copied every frame, the registers every line), then R2.
+- 2026-11-01: checks after R4's three steps (Azahar): the screen transition's iris (window 0 changing every line;
+  frames 2560 and 2600) pixel for pixel the build of de7e8ffb's; the plain 3DS build at HEAD (the shader's `target`
+  the identity, the gpu2d changes off there) gives the baseline's 1501 composited pictures' hashes to frame 3000.
+  Not tried with the direct build: `ACWW_WIDE` (its sprite atlas then in linear memory).
