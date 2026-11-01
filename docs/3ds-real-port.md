@@ -180,3 +180,20 @@ every frame, or pictures interpolated between the game's (needs R1).
   z), polygons crossing the far plane with attr bit 12 not clipped there, no 1-dot polygon hiding. Not checked yet:
   the plain 3DS build's pictures with the shader's new `target` (identity there; the run was stopped), hardware.
   Next: lighting (2.0 ms) and the vertex transform in the vertex shader, then R3's register and ROM time.
+- 2026-11-01: the user's two runs on a New 3DS with the direct build (de7e8ffb; `logs/`, not committed), played by
+  hand. `ACWW_FRAMESKIP=1` (the default): 60 game frames a second (paced; core 0 waits 3.9 ms a frame), 30 pictures;
+  core 2 idle 5.7 ms. `ACWW_FRAMESKIP=0`: about 44 game frames a second, the game slower than a DS; core 0 waits 8.2
+  ms a frame for the GPU thread; core 2: 2D 6.9, compositing 5.3, waiting for the GPU 7.9, idle 0.8; the GPU's
+  drawing 13-14 ms a composited frame for the compositing, 1.2 for the 3D; the sound's queue ran dry 83 times (8 with
+  frameskip 1). So without frameskip the compositing (the GPU's time and core 2's) is the limit, not the geometry
+  engine. (Azahar's GPU times say 1 ms: it can't show this.)
+- 2026-11-01: what the compositing fills (`ACWW_PICA_STATS=1`, new: the pixels and draws a composited frame per kind
+  of pass, the same in Azahar as on hardware; the save script to frame 3000, frameskip 0): about 1,000,000 pixels a
+  frame, of which the OBJ passes 393,000 (the OBJ layer drawn over both pictures for each of the 4 priorities, for a
+  few hundred OBJ pixels), the 3D layer's three passes (blended, as it is, marks) 240,000-330,000, the backdrop
+  98,000, the window regions 0-170,000, the screens 98,000. Two changes, each exact (the 1501 composited pictures'
+  hashes the build before's): the OBJs of a priority only on the lines that have some (commit 94b1617f: 393,000 ->
+  1,000), the GPU's premultiplied 3D picture in one pass (commit 1540f52e). Now about 510,000-540,000 pixels a frame.
+  To be measured on hardware (the GPU's compositing time, frameskip 0). Next candidates: the window regions' four
+  passes only on their lines; core 2's 2D (6.9 ms: the OBJs, each line looking at all 128 OAM entries, the CPU's
+  BGs); then R2 (sound on ndsp: notes keep playing through a slow frame, as on a DS).
