@@ -19,7 +19,7 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 |---|---|---|---|---|
 | 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4, core 2 about 2 (textures, batches), GPU 1.3 | lighting and transform in the vertex shader (R1) |
 | 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | Azahar: core 0 0.7, core 2 0.7 (start) / 5.6 (name entry) | - |
-| Sound | LLE | the ARM7 sequencer and the SPU's 16 channels mixed on the CPU, one stream to ndsp | core 0 about 1.2; crackles when frames are slow | HLE (commands): the channels on ndsp, R2 |
+| Sound | LLE, on a thread of its own (option A): the driver, sequencer, mixer and capture clocked by the sound it mixes, feeding the DSP itself | the SPU (16 channels mixed on the CPU), one stream to ndsp | core 2 (New 3DS), not core 0 | the user's listening test; ndsp channels (option B) later for the Old 3DS |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
 | Files, ROM, save | HLE (SDK): the save memory's stream commands (`CARDi_RequestStreamCommand`) and the ROM reads (`CARDi_ReadRom`, all of FS's) done at once in the host; the ROM image read ahead in the background | the save file written to the SD card on the game's thread (one write, 30 frames after the last change); the identify and the other card requests through the PXI | loads in Azahar still about 1.3 s at the first big one: ROM about 0.5 s (the read-ahead only runs while the game waits), "registers" about 0.55 s (**unverified**: the VRAM banks' remapping) | the load's register time; the save file's write in the background |
 | VRAM | HLE (SDK) for the texture uploads (`GX_LoadTex`, `GX_LoadTexPltt` straight into the banks, no remapping); otherwise LLE | the banks and the CPU's windows (vram.c): remapped at a VRAMCNT change, the mapped granules flushed each frame | Azahar: 0.1 a frame, 0 at the first big load (was 410 ms) | - |
@@ -304,3 +304,17 @@ every frame, or pictures interpolated between the game's (needs R1).
   title; with the channels on ndsp the notes playing would go on through them but the sequencer would stop, the
   music standing still. The alternative: the ARM7's sound (driver, sequencer, mixer, capture) on a thread of its own
   in real time, as the DS's ARM7 runs beside the ARM9. Choice put to the user.
+- 2026-11-01: the user's run of db973422 (frameskip 0): 59.6 game frames a second, 58-62 throughout; the sound's
+  queue ran dry 9 times (was 22); the first big load 547 ms. New: frame 2 (the start) took 10.4 s, nearly all `ROM`
+  (the run before: 0.46 s). New in that build: the log's thread writing to the SD card beside the ROM's read-ahead
+  and the game's first reads; how that would take 10 s is not known (**unverified**; maybe a one-off: the first
+  start after copying). To watch at the next start.
+- 2026-11-01: R2, option A (the user's choice): the ARM7's sound on a thread of its own (snd7/driver.c
+  `snd7_thread`), on the other core with the high priority of the profile's sampler, clocked
+  by the sound it mixes (about 3000 frames ahead of the DSP), feeding the DSP itself. Azahar (no DSP firmware, the
+  ring played away in real time), paced, to frame 3000: the pictures the build before's, core 0 without the sound,
+  the sound (ACWW_WAV) 52.8 s for 51.7 s of run, its first second the PC build's (correlation 0.997). Not known
+  without listening: (1) the output effect (the game's "Surround" sound option, the default): the ARM9 processes the
+  captured mix when the driver's alarm reaches it, which now waits until the game's thread next runs its events (up
+  to about a frame, 16.7 ms; the capture buffer's half is about 16 ms), so the effect may lag and crackle where
+  "Stereo" doesn't; (2) whether anything in the game waits on the sound in a way the real-time clock changes.
