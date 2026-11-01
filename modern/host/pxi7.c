@@ -312,17 +312,10 @@ void pxi7_save_flush(void) {
     fflush(sSaveFile);
 }
 
-static void card_request(u32 data) {
-    if (sCardWantBlock) { sCardBlock = take_pointer(11); sCardWantBlock = 0; pxi7_send_after(11 | 1u << 5, 20000); return; }
-    CARDCmd *b = sCardBlock;
-    if (data == 0) { sCardWantBlock = 1; return; }
-    if (!b) { pxi7_send_after(11 | 1u << 5, 20000); return; }
+// one request on the save memory: a card address and ARM9 memory, the card's result code (0 OK)
+static u32 backup_op(u32 op, uintptr_t src, uintptr_t dst, u32 len) {
     u32 result = 0;
-    if (b->f18) save_load(b->f18);
-    // the block's source and destination: a card address and ARM9 memory (include/sys/CardCmd.h)
-    uintptr_t src = b->srcBuf, dst = b->dstBuf;
-    u32 len = b->len;
-    switch (data) {
+    switch (op) {
     case 6:  // read: card address src to memory dst
         for (u32 i = 0; i < len; i++) ((u8 *)dst)[i] = src + i < sSaveSize ? sSave[src + i] : 0xff;
         break;
@@ -343,10 +336,31 @@ static void card_request(u32 data) {
         break;
     default: break;  // identify, read id, status ...
     }
+    return result;
+}
+
+static void card_request(u32 data) {
+    if (sCardWantBlock) { sCardBlock = take_pointer(11); sCardWantBlock = 0; pxi7_send_after(11 | 1u << 5, 20000); return; }
+    CARDCmd *b = sCardBlock;
+    if (data == 0) { sCardWantBlock = 1; return; }
+    if (!b) { pxi7_send_after(11 | 1u << 5, 20000); return; }
+    if (b->f18) save_load(b->f18);
+    // the block's source and destination: a card address and ARM9 memory (include/sys/CardCmd.h)
+    uintptr_t src = b->srcBuf, dst = b->dstBuf;
+    u32 len = b->len, result = backup_op(data, src, dst, len);
     b->result = result;
     if (gHostVerbose) fprintf(stderr, "pxi7: card %u src %llx dst %llx len %x -> %u (frame %llu)\n", data, (unsigned long long)src, (unsigned long long)dst, len, result,
                               (unsigned long long)host_frame());
     pxi7_send_after(11 | 1u << 5, 20000);
+}
+
+// The enhanced port's save (N3DS_DIRECT: CARDi_RequestStreamCommand, docs/3ds-real-port.md R3): a whole read (6) or
+// write / program (7, 8) at once, not page by page through the ARM7 with a reply to wait for; a write's verify
+// (mode 2) passes. `total`: the save memory's size (CARD_GetBackupTotalSize). The card's result code.
+u32 pxi7_backup(uintptr_t src, uintptr_t dst, u32 len, u32 op, u32 total) {
+    HOST_PROF(PROF_ARM7);
+    if (total) save_load(total);
+    return backup_op(op, src, dst, len);
 }
 
 // ---- touch panel (tag 6): request type in bits 8-14 (0 one sample, 1 start auto sampling, 2 stop, 3 stability);

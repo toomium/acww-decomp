@@ -31,18 +31,35 @@ static void read_at(u32 addr, u8 *dst, u32 n) {
     if (fseek(sRom, (long)addr, SEEK_SET) != 0 || (fread(dst, 1, n, sRom) == 0 && ferror(sRom)))
         host_fatal("the ROM file can't be read");
 }
+// (the flags atomic: the direct build reads the image in the background too, preload)
+static int piece_read(u32 p) { return __atomic_load_n(&sPieceRead[p], __ATOMIC_ACQUIRE); }
 static void image_load(u32 a, u32 n) {  // (the pieces under [a, a + n))
     for (u32 p = a / PIECE; p <= (a + n - 1) / PIECE; p++)
-        if (!sPieceRead[p]) {
+        if (!piece_read(p)) {
             u32 at = p * PIECE;
             read_at(at, sImage + at, sRomSize - at < PIECE ? sRomSize - at : PIECE);
-            sPieceRead[p] = 1;
+            __atomic_store_n(&sPieceRead[p], 1, __ATOMIC_RELEASE);
         }
 }
+#ifdef N3DS_DIRECT
+// The enhanced port (docs/3ds-real-port.md R3): the rest of the image read in the background, by a thread with its
+// own file handle that runs while the game's waits, so that the game's loads find their files in memory. A piece the
+// game asks for first it still reads itself; one read by both at once gets the same bytes twice.
+static void preload(void *arg) {
+    (void)arg;
+    FILE *f = fopen(sRomPath, "rb");
+    for (u32 p = 0; f && p <= (sRomSize - 1) / PIECE; p++) {
+        u32 at = p * PIECE, n = sRomSize - at < PIECE ? sRomSize - at : PIECE;
+        if (!piece_read(p) && fseek(f, (long)at, SEEK_SET) == 0 && fread(sImage + at, 1, n, f) == n)
+            __atomic_store_n(&sPieceRead[p], 1, __ATOMIC_RELEASE);
+    }
+    if (f) fclose(f);
+}
+#endif
 static u8 rom_byte(u32 a) {
     if (a >= sRomSize) return 0xff;
     if (sImage) {
-        if (!sPieceRead[a / PIECE]) image_load(a, 1);
+        if (!piece_read(a / PIECE)) image_load(a, 1);
         return sImage[a];
     }
     u32 addr = a & ~(u32)(BLOCK - 1);
@@ -79,6 +96,9 @@ void card_init(const char *path) {
     }
     fprintf(stderr, "card: the ROM image %s\n", sImage ? "held in memory" : "through a 1 MB cache");
     for (u32 i = 0; i < sizeof sHeader; i++) sHeader[i] = rom_byte(i);
+#ifdef N3DS_DIRECT
+    if (sImage && !host_plat_thread_start(preload, 0)) fprintf(stderr, "card: no thread to read the image ahead\n");
+#endif
 }
 
 const u8 *host_rom(u32 *size) { *size = sizeof sHeader; return sHeader; }  // (the header: main.c)
