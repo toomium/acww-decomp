@@ -603,6 +603,15 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
         layer_pass(g, l, is3d, b);
         return;
     }
+    if (blend3d && s3dPremultiplied && !sMargin) {
+        // the GPU's 3D picture is blended the same way over a 2nd target and elsewhere: one pass, which also says
+        // what this layer is where it is (the three passes below give the same)
+        stencil(GPU_EQUAL, rref | bits, rmask, 3);
+        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
+        sTag = ST_BLEND;
+        layer_pass(g, l, is3d, b);
+        return;
+    }
     // over a 2nd target (stencil bit 0), where the windows allow effects (bit 2 clear; the 3D layer: always):
     // blended, and marked (bit 5); elsewhere as it is; then what this layer is, where it is
     u32 cond = blend3d ? 1 : 5;
