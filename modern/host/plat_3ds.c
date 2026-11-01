@@ -103,7 +103,7 @@ int host_plat_sampler_start(void (*fn)(void *), void *arg) {
         s->fn = fn;
         s->arg = arg;
         if (threadCreate(thread_main, s, 16 * 1024, kCores[i] < 0 ? prio - 1 : 0x18, kCores[i], true)) {
-            fprintf(stderr, "3ds: the profile's sampler on core %d (APT_SetAppCpuTimeLimit(30): %08lx)\n",
+            fprintf(stderr, "3ds: a thread on core %d (the profile's sampler, the sound; APT_SetAppCpuTimeLimit(30): %08lx)\n",
                     kCores[i] < 0 ? 0 : kCores[i], (unsigned long)limit);
             return 1;
         }
