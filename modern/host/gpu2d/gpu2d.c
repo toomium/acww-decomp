@@ -743,6 +743,22 @@ static void record_start(const Gpu2dFrameInput *in) {
 }
 __attribute__((noinline)) static void record_changes(const Gpu2dFrameInput *in) {  // (its loop gets the registers)
     Record *r = &sRecord[sRecording];
+#ifdef N3DS_DIRECT
+    // The enhanced port (docs/3ds-real-port.md R4): the game's only H-blank work is the sky's (Sky_HBlankMain,
+    // Sky_HBlankSub), which changes the BG palettes' colour 0 (the backdrop) of both engines and registers; so only
+    // those two palette words here, not the whole 4 KB of palettes and OAM after every line. shortcut: another change
+    // of the palettes or OAM in an H-blank shows from the next frame on; compare all again if the game gets one.
+    static const u32 kWatched[2] = {0, 0x100};
+    for (int k = 0; k < 2; k++) {
+        u32 i = kWatched[k], now = ((const u32 *)in->palette)[i];
+        if (now != sShadow[i]) {
+            sShadow[i] = now;
+            r->change[r->changes].index = i, r->change[r->changes].value = now;
+            r->changes++;
+        }
+    }
+    return;
+#endif
     for (u32 part = 0; part < 2; part++) {
         const u32 *now = (const u32 *)(part ? in->oam : in->palette);  // (both 0x800-aligned: host_mem.h)
         u32 *was = sShadow + part * 0x200;
