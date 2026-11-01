@@ -128,7 +128,7 @@ static void prof_sampler(void *arg) {
 static const char *const kProfNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
                                                "sound", "frontend", "pacing", "GPU wait", "lighting",
                                                "vertices", "waiting for the GPU thread", "idle", "ROM",
-                                               "ARM7", "uploads"};
+                                               "ARM7", "uploads", "VRAM"};
 // the slowest frame of the 120: the parts the sampler saw in it (milliseconds), the game's thread and the GPU thread
 static u32 sProfAt[2][PROF_N], sProfSlowest[2][PROF_N];
 static void prof_frame(int slowest) {
