@@ -215,6 +215,19 @@ static void watchdog(void *arg) {
     }
     thread_stopped();
 }
+#ifdef N3DS_DIRECT
+// The enhanced port's log (docs/3ds-real-port.md): stderr is buffered (plat_3ds.c), and this thread writes it out four
+// times a second: a write to the 3DS's SD card took the game's thread 20-140 ms (ACWW_FPS's reports). What a crash
+// leaves unwritten is lost.
+static void log_writer(void *arg) {
+    (void)arg;
+    while (!threads_quitting()) {
+        for (int i = 0; i < 25 && !threads_quitting(); i++) host_plat_sleep_ms(10);  // (threads_stop waits 250 ms)
+        fflush(stderr);
+    }
+    thread_stopped();
+}
+#endif
 static void watchdog_start(void) {
     const char *e = getenv("ACWW_WATCHDOG");
     long ms = e ? strtol(e, 0, 10) : 2000;
@@ -318,7 +331,13 @@ static void run_events_body(void) {
     wm7_run(sCycles);
     while (sCycles >= sNextVblank) {
         static int watchdogOn;
-        if (!watchdogOn) { watchdogOn = 1; watchdog_start(); }
+        if (!watchdogOn) {
+            watchdogOn = 1;
+            watchdog_start();
+#ifdef N3DS_DIRECT
+            if (!thread_start(log_writer, 0, 0)) fprintf(stderr, "host: no thread for the log\n");
+#endif
+        }
         __atomic_store_n(&sHeartbeatFrame, (u32)host_frame(), __ATOMIC_RELAXED);
         u16 st = R16(0x04000004);
         if (st & 8) host_irq_raise(1);    // VBlank
