@@ -70,6 +70,7 @@ static int sNV;
 
 static Gpu2dLayers sLayers;            // its pixel buffers in linear memory (the GPU's transfers read them)
 static C3D_Tex sBg[2][4], sObj[2], sRegion[2], s3d;
+static C3D_Tex sSprites;               // the OBJs as sprites (Gpu2dLayers.sprite: the direct build), their atlas
 static u32 *s3dStage;                  // the 3D picture as RGBA8, row by row
 static C3D_Tex *s3dTex;                // this frame's 3D picture: the GPU's (premultiplied) or s3d
 static int s3dPremultiplied;
@@ -212,6 +213,14 @@ int pdisp_init(void) {
         sCompTarget[e] = C3D_RenderTargetCreateFromTex(&sComp[e], GPU_TEXFACE_2D, 0, GPU_RB_DEPTH24_STENCIL8);
         if (!sCompTarget[e]) return 0;
     }
+#ifdef N3DS_DIRECT  // (the OBJs as sprites: docs/3ds-real-port.md R4)
+    if (!(sLayers.sprite = linearAlloc(GPU2D_ATLAS_W * GPU2D_ATLAS_H * 4))) return 0;
+    if (!(!gpu3d_wide_wanted() && C3D_TexInitVRAM(&sSprites, GPU2D_ATLAS_W, GPU2D_ATLAS_H, GPU_RGBA8)) &&
+        !C3D_TexInit(&sSprites, GPU2D_ATLAS_W, GPU2D_ATLAS_H, GPU_RGBA8))
+        return 0;
+    C3D_TexSetFilter(&sSprites, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetWrap(&sSprites, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+#endif
     return 1;
 }
 
@@ -517,7 +526,7 @@ static int affine_wraps(const Gpu2dLineState *s, int l) {
 // a layer's texture and its wrapping for the group (0: none)
 static BgTex *layer_bind(const Group *g, int l, int is3d) {
     const Gpu2dLineState *s = g->s;
-    if (l == 4) { source(&sObj[g->engine]); return 0; }
+    if (l == 4) { source(sLayers.sprite ? &sSprites : &sObj[g->engine]); return 0; }
     if (l == 0 && is3d) { source(s3dTex); return 0; }
     if (!(s->gpuBg >> l & 1)) { source(&sBg[g->engine][l]); return 0; }
     BgTex *b = bg_texture(g->engine, l, s);
@@ -562,9 +571,24 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
 }
 // (the OBJs of a priority only on the lines that have some: the OBJ layer is mostly empty)
 static int sObjPrio;
+// the sprites of priority sObjPrio in the group's pieces: the later in OAM first, so that the earlier is in front
+static void sprite_quads(const Group *g) {
+    const Gpu2dSprite *sp = sLayers.sprites[g->engine];
+    for (int k = sLayers.nsprites[g->engine] - 1; k >= 0; k--) {
+        const Gpu2dSprite *s = &sp[k];
+        if (s->prio != sObjPrio) continue;
+        for (int i = 0; i < g->n; i++) {
+            int y0 = s->y > g->y0[i] ? s->y : g->y0[i], y1 = s->y + s->h < g->y1[i] ? s->y + s->h : g->y1[i];
+            if (y1 > y0)
+                rect(s->x, (float)y0, (float)(s->x + s->w), (float)y1, (float)s->u / GPU2D_ATLAS_W,
+                     (float)(s->u + s->w) / GPU2D_ATLAS_W, (float)(s->v + y0 - s->y), GPU2D_ATLAS_H, 0);
+        }
+    }
+}
 static void layer_pass(const Group *g, int l, int is3d, const BgTex *b) {
     begin();
-    for (int i = 0; i < g->n; i++) {
+    if (l == 4 && sLayers.sprite) sprite_quads(g);
+    for (int i = 0; i < g->n && !(l == 4 && sLayers.sprite); i++) {
         if (l != 4) { layer_quad(g, i, l, is3d, b); continue; }
         const u8 *has = sLayers.objPrio[g->engine];
         for (int y0 = g->y0[i], y1; y0 < g->y1[i]; y0 = y1) {
@@ -576,7 +600,9 @@ static void layer_pass(const Group *g, int l, int is3d, const BgTex *b) {
     end();
 }
 static int obj_lines(const Group *g, int prio) {
-    for (int i = 0; i < g->n; i++)
+    for (int k = 0; sLayers.sprite && k < sLayers.nsprites[g->engine]; k++)
+        if (sLayers.sprites[g->engine][k].prio == prio) return 1;
+    for (int i = 0; i < g->n && !sLayers.sprite; i++)
         for (int y = g->y0[i]; y < g->y1[i]; y++)
             if (sLayers.objPrio[g->engine][y] >> prio & 1) return 1;
     return 0;
@@ -591,7 +617,7 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
     eva = eva > 16 ? 16 : eva, evb = evb > 16 ? 16 : evb;
     if (l == 4 && !obj_lines(g, prio)) return;  // (nothing of it to draw)
     sObjPrio = prio;
-    if (l == 4) C3D_AlphaTest(true, GPU_EQUAL, (prio + 1) * 32);
+    if (l == 4 && !sLayers.sprite) C3D_AlphaTest(true, GPU_EQUAL, (prio + 1) * 32);
     else C3D_AlphaTest(true, GPU_GREATER, 0);
     u32 bits = second | first << 1;
     int blend3d = l == 0 && is3d, alpha = !blend3d && first && effect == 1;
@@ -703,7 +729,8 @@ static void group(const Group *g) {
                 continue;
             }
             // (the layers the CPU drew have the windows applied; the GPU's BGs and the 3D layer are drawn per region)
-            int perRegion = windows && l < 4 && ((s->gpuBg >> l & 1) || (l == 0 && is3d));
+            // (the sprites too: the windows aren't applied to them)
+            int perRegion = windows && ((l < 4 && ((s->gpuBg >> l & 1) || (l == 0 && is3d))) || (l == 4 && sLayers.sprite));
             if (!perRegion) { layer(g, l, p, is3d, 0, 0); continue; }
             for (u32 k = 0; k < 4; k++)
                 if (shows[k] >> l & 1) layer(g, l, p, is3d, k << 3, 0x18);
@@ -901,8 +928,16 @@ static void frame_job(void *arg) {
         for (int n = 0; n < 4; n++)
             if ((used[e] & 0x100u << n) && (cpuBg[e] >> n & 1))
                 upload(sLayers.bg[e][n], &sBg[e][n], W * H * 2, GX_TRANSFER_FMT_RGB5A1);
-        if (used[e] & 0x1000) upload(sLayers.obj[e], &sObj[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
+        if ((used[e] & 0x1000) && !sLayers.sprite) upload(sLayers.obj[e], &sObj[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
         if (used[e] & 0xe000) upload(sLayers.region[e], &sRegion[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
+    }
+    if (sLayers.sprite && (sLayers.nsprites[0] || sLayers.nsprites[1])) {
+        u32 bytes = GPU2D_ATLAS_W * GPU2D_ATLAS_H * 4, dim = GX_BUFFER_DIM(GPU2D_ATLAS_W, GPU2D_ATLAS_H);
+        GSPGPU_FlushDataCache(sLayers.sprite, bytes);
+        HOST_PROF_ON(gPicaProf, PROF_UPLOAD);
+        C3D_SyncDisplayTransfer(sLayers.sprite, dim, sSprites.data, dim,
+                                kLinearToTiled | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                                    GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
     }
     if (!texture3d && picture3d && (used[0] & 8)) {
         static u32 a8[32];
@@ -917,7 +952,7 @@ static void frame_job(void *arg) {
     sNV = 0;
     if (sStats < 0) sStats = getenv("ACWW_PICA_STATS") && atoi(getenv("ACWW_PICA_STATS"));
     for (int e = 0; sStats && e < 2; e++) {  // (the pixels the layers the CPU drew actually have)
-        for (int i = 0; (used[e] & 0x1000) && i < W * H; i++) sStatObj += sLayers.obj[e][i] != 0;
+        for (int i = 0; (used[e] & 0x1000) && !sLayers.sprite && i < W * H; i++) sStatObj += sLayers.obj[e][i] != 0;
         for (int n = 0; n < 4; n++)
             for (int i = 0; (used[e] & 0x100u << n) && (cpuBg[e] >> n & 1) && i < W * H; i++)
                 sStatBg += sLayers.bg[e][n][i] != 0;

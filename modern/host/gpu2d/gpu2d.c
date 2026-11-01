@@ -502,7 +502,7 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
             d[x] = (s[x] & PIX_OPAQUE) && (mask[x] >> n & 1) ? sTo5551[s[x] & 0x7fff] : 0;
     }
     u32 prios = 0;
-    if (dispcnt & 0x1000) {
+    if ((dispcnt & 0x1000) && !sLayers->sprite) {  // (sprites: gpu2d_draw_layers)
         u32 *d = sLayers->obj[e->num] + line * SCREEN_W;
         const ObjLine *obj = &e->obj;
         for (int x = 0; x < SCREEN_W; x++) {
@@ -796,6 +796,7 @@ void gpu2d_draw_layers(int record) {
         sLayers->palette[n] = (const u8 *)r->final + 0x400 * n;
     }
     sLayers->topEngine = r->topEngine;
+    int ax = 0, ay = 0, rowH = 0;  // (the sprite atlas, filled at line 0)
     for (int line = 0; line < SCREEN_H; line++) {
         for (; applied < r->lines[0][line][G2L_PALETTE]; applied++) work[r->change[applied].index] = r->change[applied].value;
         for (int n = 0; n < 2; n++) {
@@ -809,7 +810,11 @@ void gpu2d_draw_layers(int record) {
             d->powcnt = (u16)l[G2L_POWCNT];
             d->palette = (const u8 *)work + 0x400 * n;
             d->oam = (const u8 *)(work + 0x200) + 0x400 * n;
-            if (line == 0 && r->haveObj0[n]) d->obj = r->obj0[n];
+            if (line == 0 && sLayers->sprite)
+                sLayers->nsprites[n] = gpu2d_obj_sprites(d, sLayers->sprites[n], sLayers->sprite, &ax, &ay, &rowH);
+            // (sprites: the lines' OBJs only for the OBJ window, which shapes the windows' regions)
+            if (sLayers->sprite && !(reg32(d, REG_DISPCNT) & 0x8000)) {}
+            else if (line == 0 && r->haveObj0[n]) d->obj = r->obj0[n];
             else if (line == 0) memset(&d->obj, 0, sizeof d->obj);
             else gpu2d_render_obj_line(d, line, &d->obj);
             render_line(d, 0, line);

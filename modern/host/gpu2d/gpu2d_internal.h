@@ -126,5 +126,9 @@ void gpu2d_render_bg_line(Engine *e, int n, int line);
 int gpu2d_bg_kind(const Engine *e, int n);
 // gpu2d_obj.c: the OBJs' pixels of a line into *dst
 void gpu2d_render_obj_line(Engine *e, int line, ObjLine *dst);
+// gpu2d_obj.c: the shown OBJs (not the OBJ-window ones) as sprites, their boxes' pixels into the atlas from (*ax, *ay)
+// on in rows *rowH tall (Gpu2dLayers.sprite); returns how many were put into out (a box that doesn't fit is left out)
+struct Gpu2dSprite;
+int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int *ax, int *ay, int *rowH);
 
 #endif
