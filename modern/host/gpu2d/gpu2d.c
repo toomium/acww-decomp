@@ -501,16 +501,19 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
         for (int x = 0; x < SCREEN_W; x++)
             d[x] = (s[x] & PIX_OPAQUE) && (mask[x] >> n & 1) ? sTo5551[s[x] & 0x7fff] : 0;
     }
+    u32 prios = 0;
     if (dispcnt & 0x1000) {
         u32 *d = sLayers->obj[e->num] + line * SCREEN_W;
         const ObjLine *obj = &e->obj;
         for (int x = 0; x < SCREEN_W; x++) {
             if (!obj->source[x] || !(mask[x] & 0x10)) { d[x] = 0; continue; }
+            prios |= 1u << obj->prio[x];
             u16 c = obj_color(e, dispcnt, obj, x);
             u32 r = c & 31, g = c >> 5 & 31, b = c >> 10 & 31;
             d[x] = (r << 3 | r >> 2) << 24 | (g << 3 | g >> 2) << 16 | (b << 3 | b >> 2) << 8 | (obj->prio[x] + 1u) * 32;
         }
     }
+    sLayers->objPrio[e->num][line] = (u8)prios;
     if (dispcnt & 0xe000) {
         u32 *d = sLayers->region[e->num] + line * SCREEN_W;
         for (int x = 0; x < SCREEN_W; x++) d[x] = 63u + 64u * region[x];

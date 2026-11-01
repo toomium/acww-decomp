@@ -49,6 +49,7 @@ typedef struct Gpu2dLayers {
     // with windows (DISPCNT bits 13-15): the window each pixel is in, as alpha 63 + 64 * region (0 outside, 1
     // window 0, 2 window 1, 3 the OBJ window); WININ / WINOUT say what each shows
     uint32_t *region[2];
+    uint8_t objPrio[2][192];  // the OBJ priorities with pixels on each line (bit 0-3: priority 0-3)
     Gpu2dLineState line[2][192];
     int32_t ref[2][192][4];  // BG2 X, Y, BG3 X, Y: the affine BGs' internal reference points at each line (20.8)
     // each engine's BG VRAM (16 KB granules, the address mask) and BG palette (0x200 bytes), as at the frame's end

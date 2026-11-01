@@ -432,9 +432,36 @@ static void stencil(GPU_TESTFUNC f, u32 ref, u32 mask, u32 write) {
 // ---- a pass: quads put together, then drawn at once (draws are what costs on the CPU: the GPU's state is set up for
 // each one)
 static int sMark;
+// ACWW_PICA_STATS=1: the pixels the GPU fills and the draws, per kind of pass, every 300 composited frames
+enum { ST_BACKDROP, ST_REGION, ST_OBJ, ST_LAYER, ST_BLEND, ST_ASIS, ST_MARK, ST_EFFECT, ST_UP, ST_SCREEN, ST_N };
+static int sStats = -1, sTag;
+static double sStatPx[ST_N], sStatDraws[ST_N], sStatObj, sStatBg;
 static void begin(void) { sMark = sNV; }
 static void end(void) {
-    if (sNV > sMark) C3D_DrawArrays(GPU_TRIANGLES, sMark, sNV - sMark);
+    if (sNV <= sMark) return;
+    C3D_DrawArrays(GPU_TRIANGLES, sMark, sNV - sMark);
+    if (sStats) {
+        sStatDraws[sTag]++;
+        for (int i = sMark; i < sNV; i += 3) {  // (each triangle's area)
+            const float *a = sV[i].pos, *b = sV[i + 1].pos, *c = sV[i + 2].pos;
+            float t = ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2;
+            sStatPx[sTag] += t < 0 ? -t : t;
+        }
+    }
+}
+static void stats_report(void) {
+    static const char *const kName[ST_N] = {"backdrop", "window regions", "OBJ passes", "BG layers", "blended", "as it is", "marks",
+                                            "effects", "doubling", "screens"};
+    static u32 frames;
+    if (++frames % 300) return;
+    fprintf(stderr, "pica: kpixels (draws) a composited frame:");
+    for (int i = 0; i < ST_N; i++) {
+        fprintf(stderr, " %s %.0f (%.1f)", kName[i], sStatPx[i] / 300 / 1000, sStatDraws[i] / 300);
+        sStatPx[i] = sStatDraws[i] = 0;
+    }
+    fprintf(stderr, " | OBJ texels shown %.0f, BG texels shown (CPU BGs) %.0f\n", sStatObj / 300 / 1000,
+            sStatBg / 300 / 1000);
+    sStatObj = sStatBg = 0;
 }
 // a quad: its corners (pixels: top left, top right, bottom right, bottom left) and their texture coordinates
 static void quad(const float xy[4][2], const float uv[4][2], const float col[4]) {
@@ -533,10 +560,26 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
     }
     quad(xy, uv, 0);
 }
+// (the OBJs of a priority only on the lines that have some: the OBJ layer is mostly empty)
+static int sObjPrio;
 static void layer_pass(const Group *g, int l, int is3d, const BgTex *b) {
     begin();
-    for (int i = 0; i < g->n; i++) layer_quad(g, i, l, is3d, b);
+    for (int i = 0; i < g->n; i++) {
+        if (l != 4) { layer_quad(g, i, l, is3d, b); continue; }
+        const u8 *has = sLayers.objPrio[g->engine];
+        for (int y0 = g->y0[i], y1; y0 < g->y1[i]; y0 = y1) {
+            for (y1 = y0; y1 < g->y1[i] && (has[y1] >> sObjPrio & 1); y1++) {}
+            if (y1 > y0) rect(0, (float)y0, W, (float)y1, 0, (float)W / TEX, (float)y0, TEX, 0);
+            else y1 = y0 + 1;
+        }
+    }
     end();
+}
+static int obj_lines(const Group *g, int prio) {
+    for (int i = 0; i < g->n; i++)
+        for (int y = g->y0[i]; y < g->y1[i]; y++)
+            if (sLayers.objPrio[g->engine][y] >> prio & 1) return 1;
+    return 0;
 }
 
 // one layer of a group: l 0-3 BG (BG0 the 3D layer when is3d), 4 the OBJs of priority prio; where the window regions
@@ -546,6 +589,8 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
     u32 bld = s->bldcnt, effect = bld >> 6 & 3, first = bld >> l & 1, second = bld >> (8 + l) & 1;
     u32 eva = s->bldalpha & 31, evb = s->bldalpha >> 8 & 31;
     eva = eva > 16 ? 16 : eva, evb = evb > 16 ? 16 : evb;
+    if (l == 4 && !obj_lines(g, prio)) return;  // (nothing of it to draw)
+    sObjPrio = prio;
     if (l == 4) C3D_AlphaTest(true, GPU_EQUAL, (prio + 1) * 32);
     else C3D_AlphaTest(true, GPU_GREATER, 0);
     u32 bits = second | first << 1;
@@ -554,6 +599,7 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
     if (!(blend3d || alpha)) {
         stencil(GPU_EQUAL, rref | bits, rmask, 3);
         opaque();
+        sTag = l == 4 ? ST_OBJ : ST_LAYER;
         layer_pass(g, l, is3d, b);
         return;
     }
@@ -570,17 +616,20 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
         C3D_BlendingColor(ca | ca << 8 | ca << 16 | cb << 24);
         C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_CONSTANT_COLOR, GPU_CONSTANT_ALPHA, GPU_ONE, GPU_ZERO);
     }
+    sTag = ST_BLEND;
     layer_pass(g, l, is3d, b);
     if (!sAllSecond) {
         stencil(GPU_EQUAL, rref, rmask | 0x20, 0);
         // (the GPU's premultiplied 3D picture over what is below elsewhere too: its colour alone is darkened where its
         // alpha isn't full)
         if (!(blend3d && s3dPremultiplied)) opaque();
+        sTag = ST_ASIS;
         layer_pass(g, l, is3d, b);
     }
     if (sNoMark) return;
     colour_writes(0);
     stencil(GPU_EQUAL, rref | bits, rmask, 0x23);
+    sTag = ST_MARK;
     layer_pass(g, l, is3d, b);
     colour_writes(1);
 }
@@ -607,6 +656,7 @@ static void group(const Group *g) {
     // margins: outside the windows)
     u32 outside = sMargin && windows && !(shows[0] & 0x20) ? 4 : 0;
     stencil(GPU_ALWAYS, (bld >> 13 & 1) | (bld >> 5 & 1) << 1 | outside, 0, 0xff);
+    sTag = ST_BACKDROP;
     begin();
     for (int i = 0; i < g->n; i++) {
         bgr555(piece_state(g, i)->backdrop, 1, col);
@@ -615,6 +665,7 @@ static void group(const Group *g) {
     end();
     if (windows && !sMargin) {
         colour_writes(0);
+        sTag = ST_REGION;
         source(&sRegion[g->engine]);
         for (u32 k = 0; k < 4; k++) {
             C3D_AlphaTest(true, GPU_EQUAL, (int)(63 + 64 * k));
@@ -651,6 +702,7 @@ static void group(const Group *g) {
     }
     C3D_AlphaTest(false, GPU_ALWAYS, 0);
     source(0);
+    sTag = ST_EFFECT;
     if (effect == 2 || effect == 3) {  // brightness up / down where a 1st target is on top (BLDY per piece)
         stencil(GPU_EQUAL, 2, 6, 0);
         C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
@@ -854,6 +906,13 @@ static void frame_job(void *arg) {
         upload(s3dStage, &s3d, W * H * 4, GX_TRANSFER_FMT_RGBA8);
     }
     sNV = 0;
+    if (sStats < 0) sStats = getenv("ACWW_PICA_STATS") && atoi(getenv("ACWW_PICA_STATS"));
+    for (int e = 0; sStats && e < 2; e++) {  // (the pixels the layers the CPU drew actually have)
+        for (int i = 0; (used[e] & 0x1000) && i < W * H; i++) sStatObj += sLayers.obj[e][i] != 0;
+        for (int n = 0; n < 4; n++)
+            for (int i = 0; (used[e] & 0x100u << n) && (cpuBg[e] >> n & 1) && i < W * H; i++)
+                sStatBg += sLayers.bg[e][n][i] != 0;
+    }
     C3D_BindProgram(&sProgram);
     C3D_AttrInfo *ai = C3D_GetAttrInfo();
     AttrInfo_Init(ai);
@@ -886,6 +945,7 @@ static void frame_job(void *arg) {
         float pw = W, ph = H, size = TEX;
         if (sUpTarget) {
             C3D_FrameDrawOn(sUpTarget);
+            sTag = ST_UP;
             projection(UP, UP, 0);
             source(&sComp[e]);
             begin();
@@ -903,6 +963,7 @@ static void frame_job(void *arg) {
         else if (sScreenStencil) margins2d(e, x0, y0, sw);
         source(pic);
         opaque();
+        sTag = ST_SCREEN;
         begin();
         const float xy[4][2] = {{x0, y0}, {x0 + dw, y0}, {x0 + dw, y0 + dh}, {x0, y0 + dh}};
         const float uv[4][2] = {{0, 1}, {pw / size, 1}, {pw / size, 1 - ph / size}, {0, 1 - ph / size}};
@@ -912,6 +973,7 @@ static void frame_job(void *arg) {
     }
     GSPGPU_FlushDataCache(sV, (u32)sNV * sizeof(DVertex));
     C3D_FrameEnd(0);
+    if (sStats) stats_report();
     if (sHash < 0) sHash = getenv("ACWW_PICA_HASH") && atoi(getenv("ACWW_PICA_HASH"));
     if (sHash) {  // (both engines' pictures read back: FNV-1a)
         u32 hash = 2166136261u;
