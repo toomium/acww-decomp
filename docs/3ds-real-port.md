@@ -279,3 +279,10 @@ every frame, or pictures interpolated between the game's (needs R1).
   committed): most of it compared the 4 KB of palettes and OAM after every line, for the sky's H-blank (the game's
   only one: the backdrop colours and registers). Only the two backdrop words now:
   core 0's 2D 2.44 -> 0.70 ms a frame, Azahar 61 -> 68 game frames a second; pixel for pixel. Next: the sound (R2).
+- 2026-11-01: the user's run of 48102ac2 on a New 3DS (frameskip 0, about 5650 frames): 60.0 game frames a second
+  on average, frames 2000-4800 at 59-61 throughout. The first big load (frame 183) 881 -> 562 ms (ROM 306, game 161,
+  registers 75, VRAM 2), a later one (frame 1662) 620 -> 281 ms. Single slow frames of 195-200 ms at frames 241 and
+  361, nearly all `game` (the game's own work, or runtime parts without a profile mark: not looked into). The sound's
+  queue ran dry 22 times (was 36). No 9.6 s frame; the watchdog line at the end is the home menu's. Core 0 a frame:
+  geometry with lighting and vertices 3.7, game 1.7, sound 1.5, 2D 1.4, registers 1.2, VRAM 0.55, waiting for core 2
+  2.9, pacing 3.0 (time to spare); core 2: compositing 3.6, 3D 2.0, 2D 1.3, waiting for the GPU 5.2, idle 4.7.
