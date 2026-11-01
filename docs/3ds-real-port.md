@@ -21,7 +21,7 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 | 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures (as before); all drawn on the PICA | the per-line record on core 0 (the registers each line, the 2D VRAM banks copied each frame, the H-blank palette changes); the per-line state for the effects | Azahar, not yet the New 3DS: core 0 about 5, core 2 1.3 (start) / 5.6 (name entry) | the record on core 0: VRAM not copied whole every frame |
 | Sound | LLE | the ARM7 sequencer and the SPU's 16 channels mixed on the CPU, one stream to ndsp | core 0 about 1.2; crackles when frames are slow | HLE (commands): the channels on ndsp, R2 |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
-| Files, ROM, save | LLE | card reads and the ARM7's services | loads 0.3-1.5 s, slow frames when saving | HLE (SDK): FS by name, R3 |
+| Files, ROM, save | HLE (SDK): the save memory's stream commands (`CARDi_RequestStreamCommand`) and the ROM reads (`CARDi_ReadRom`, all of FS's) done at once in the host; the ROM image read ahead in the background | the save file written to the SD card on the game's thread (one write, 30 frames after the last change); the identify and the other card requests through the PXI | loads in Azahar still about 1.3 s at the first big one: ROM about 0.5 s (the read-ahead only runs while the game waits), "registers" about 0.55 s (**unverified**: the VRAM banks' remapping) | the load's register time; the save file's write in the background |
 | Input, clock, NVRAM | LLE (cheap) | the PXI round trip | negligible | R3 |
 | Threads, the game's frame | kept (game logic) | - | - | - |
 
@@ -235,3 +235,20 @@ every frame, or pictures interpolated between the game's (needs R1).
   frames 2560 and 2600) pixel for pixel the build of de7e8ffb's; the plain 3DS build at HEAD (the shader's `target`
   the identity, the gpu2d changes off there) gives the baseline's 1501 composited pictures' hashes to frame 3000.
   Not tried with the direct build: `ACWW_WIDE` (its sprite atlas then in linear memory).
+- 2026-11-01: the user's run with the 2D as HLE (e56383af), frameskip 0: about 56.5 game frames a second on average,
+  long stretches at 60 (frames 1680-2880), the town and the name entry 50-60; core 2 idle 6.4 ms, the GPU's
+  compositing 8-9 ms: core 0 is the limit now. Two frames of 9.6 s (frames 6001 and 12121; the user: once while Mr.
+  Resetti talked, once while saving, the second text box late), all of it in `game`, the watchdog saying virtual
+  time didn't move (no register access or wait). Not reproduced: the plain PC build through the save script's save
+  (frame 33000) reports no spin. Suspected, **unverified**: the save path (a 256-byte page at a time through the
+  ARM7, each waiting for a reply that needs virtual time to pass). The user's choice: the files and the save next.
+- 2026-11-01: R3, files and the save at the SDK level (commit 464d1cda): the save memory's stream commands and the
+  ROM reads done at once in the host, the ROM image read ahead in the background. The game's whole save path is
+  Backup_Read/Write(Async) (src/main/unk_0204fe7c.cpp) over one SDK function, CARDi_RequestStreamCommand; an async
+  request that is done when it returns makes the game repeat it forever (it counts it as failed), so an async one
+  finishes on the card thread a millisecond later. Checked on the PC with only the SDK changes (configure_host.py
+  `--cc gcc-14 --suffix _cardtest --extra-cflags=-DN3DS_DIRECT`): the save script to frame 34000 runs through (17
+  reads, 3 writes), the save file the plain build's but 4 bytes at the end of both slots (time-dependent, and the
+  checksum). Azahar: frames 1200, 2400 and 5000 pixel for pixel the build before's. The first big load (frame 183)
+  in Azahar 1330 -> 1270 ms; its "registers" part (about 550 ms) is not the card: next to look at. Whether the 9.6 s
+  frames are gone needs the user's hardware run (the same places: Mr. Resetti, a save).
