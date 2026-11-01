@@ -259,3 +259,12 @@ every frame, or pictures interpolated between the game's (needs R1).
   writes in the background give the file of writing at once. Continuing from a save through the SDK-level reads
   (the PC, the continue script on the save script's file): the same town and house, the text a few frames earlier.
   For the user's next run: the same places (Mr. Resetti, a save); the log then says which write was slow, if one is.
+- 2026-11-01: the user's run of 9cb3b4e9 on a New 3DS (frameskip 0, about 3400 frames): 58.3 game frames a second on
+  average, mostly 56-60 outside the loads; no 9.6 s frame (whether the user saved or met Mr. Resetti in it: not
+  known); three `ACWW_FPS` reports took 118-134 ms to write (the SD card). The first big load (frame 183) 1063 ->
+  881 ms (ROM 433 -> 253: the read-ahead), a later one (frame 1683) 620 ms with ROM 16 ms: what is left of a load is
+  about 430 ms of "registers" (and 165 ms of game). The sound's queue ran dry 36 times. Where the loads' register
+  time goes, **unverified**: the game uploads textures with GX_BeginLoadTex / GX_LoadTex / GX_EndLoadTex (the SDK),
+  which map the texture banks to the LCDC window and back: vram.c copies each bank's granules between the window and
+  the bank at every VRAMCNT change. Also on core 0 every frame: host_vram_flush copies every CPU-mapped granule back
+  to its bank (render.c), and the 2D record copies the 2D banks again (gpu2d.c record_end).
