@@ -8,6 +8,23 @@ Goal (the user, 2026-11-01): not a faithful DS any more but an enhanced 3DS port
 game does on a DS, and adds what a DS can't: a true wide screen, stereoscopic 3D, quality-of-life features, new
 features, more languages. Matching the DS or the PC build bit for bit is no longer a goal.
 
+## Status: where each subsystem stands
+
+Kept up to date with every step (the log, section 5, has the details and the numbers' sources). "LLE": the DS's
+hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (commands, state) carried out by the
+3DS directly (section 1, level B); "HLE (SDK)": the SDK's functions replaced (level C). Costs: a New 3DS, frameskip
+0, ms a game frame (the log, 2026-11-01).
+
+| Subsystem | Now | What is still rebuilt | Cost | Next |
+|---|---|---|---|---|
+| 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4, core 2 about 2 (textures, batches), GPU 1.3 | lighting and transform in the vertex shader (R1) |
+| 2D | LLE; compositing on the PICA | the whole 2D engine: registers, VRAM, OAM, palettes; every line recorded (core 0) and rebuilt (core 2); windows and blending as on a DS (stencil passes) | core 0 3.8, core 2 6.3 + 4.1, GPU 8.6 | HLE (commands): R4 |
+| Sound | LLE | the ARM7 sequencer and the SPU's 16 channels mixed on the CPU, one stream to ndsp | core 0 about 1.2; crackles when frames are slow | HLE (commands): the channels on ndsp, R2 |
+| Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
+| Files, ROM, save | LLE | card reads and the ARM7's services | loads 0.3-1.5 s, slow frames when saving | HLE (SDK): FS by name, R3 |
+| Input, clock, NVRAM | LLE (cheap) | the PXI round trip | negligible | R3 |
+| Threads, the game's frame | kept (game logic) | - | - | - |
+
 ## 0. Rules for this branch
 
 - docs/3ds.md's rules hold except these:
