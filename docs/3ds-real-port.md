@@ -286,3 +286,21 @@ every frame, or pictures interpolated between the game's (needs R1).
   queue ran dry 22 times (was 36). No 9.6 s frame; the watchdog line at the end is the home menu's. Core 0 a frame:
   geometry with lighting and vertices 3.7, game 1.7, sound 1.5, 2D 1.4, registers 1.2, VRAM 0.55, waiting for core 2
   2.9, pacing 3.0 (time to spare); core 2: compositing 3.6, 3D 2.0, 2D 1.3, waiting for the GPU 5.2, idle 4.7.
+- 2026-11-01: the user: frameskip 0 the default and the log off the game's thread, then the sound. `ACWW_FRAMESKIP`
+  is 0 by default in the direct build now (commit 6bcdce6e; 1 brings back every other picture). The log (stderr,
+  log.txt) is buffered (64 KB) and a thread of its own writes it out four times a second (commit db973422; it stops
+  with the other background threads before the program ends): a crash now loses up to 250 ms of the log (Luma's
+  dumps are unaffected). Azahar, paced to frame 1500: every report and the exit line in the log.
+- 2026-11-01: R2, the sound: what the game asks of the SPU, before choosing (the PC build, the save script to frame
+  34000, gdb on `spu_capcnt_written`): both capture units are switched on 20 times (SNDCAPCNT 0x80: the mixer,
+  16 bits, looped) with SOUNDCNT 0xb97f (the outputs from channels 1 and 3, which the mixer leaves out): NitroSystem's
+  output effect (Snd_StartOutputEffect, NNS_SndCaptureStartOutputEffect): the whole mix captured, processed on the
+  ARM9 (OutputEffectCallback: normal, surround, headphone or mono) and played back through channels 1 and 3. The
+  game's sound option picks it: Stereo -> 0 (normal: unchanged), Surround -> 1 (the side signal, and
+  SND_SetSurroundDecay(0x3000) in the ARM7's panning); `sSndOutputModeTable[PlayerOptions_IsStereo()]`
+  (src/main/unk_0209dc94.cpp). So the channels on ndsp one by one would play nothing in those scenes unless the
+  output effect is recognised and replaced (surround then lost or redone), and Azahar here can't play ndsp (no DSP
+  firmware). Where the queue runs dry (the user's last run): at the loads and at the slow frames (70-95 ms) of the
+  title; with the channels on ndsp the notes playing would go on through them but the sequencer would stop, the
+  music standing still. The alternative: the ARM7's sound (driver, sequencer, mixer, capture) on a thread of its own
+  in real time, as the DS's ARM7 runs beside the ARM9. Choice put to the user.
