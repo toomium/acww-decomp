@@ -53,7 +53,7 @@ What no level changes on its own: the game makes a new 3D picture every third fr
 2026-10-29). Smoother than a DS needs a change in the game (draw every frame, or interpolate between pictures as
 Ship of Harkinian and Zelda64Recomp do), and that needs 3D at level B or C, where each draw's matrices are known.
 
-## 2. Decisions (proposed, for the user to confirm)
+## 2. Decisions (confirmed by the user, 2026-11-01)
 
 - **P1: 3D at level B first.** A command processor on the PICA replaces `gpu3d_geom.c` (no fixed point, clipping or
   FIFO on the CPU); the game and NNS_G3d stay. It removes the largest cost and gives float depth for stereoscopic
@@ -70,9 +70,9 @@ Ship of Harkinian and Zelda64Recomp do), and that needs 3D at level B or C, wher
 
 ### R0: before anything is replaced
 
-**R0.0 What "too slow" is.** With the user: the frame rate, the hitches, the loads, or the Old 3DS. On the PC
-build, the same scene: whether the 20 3D pictures a second are the game's own (then only R6.3 helps). Done when
-written here with numbers.
+**R0.0 What "too slow" is.** Answered (the user, 2026-11-01): the pictures a second on the New 3DS; and the Old 3DS
+should run the game too, which it can't now. Open: whether the 20 3D pictures a second are the game's own (the PC
+build, the same scene; then only R6.3 helps).
 
 **R0.1 The game's direct hardware use.** List the 615 register accesses in `main`/`ov*` by register and purpose,
 and the direct VRAM writes. Done when each entry names the task that removes it.
@@ -120,10 +120,12 @@ depth. **R5.3** The UI laid out for the wide screens (R4).
 ### R6: features
 
 **R6.1** Controls (the user's list, docs/3ds.md 2026-10-29): ZR as a second B (running), the map on ZR, the pockets
-on X, pulling weeds and shaking trees on Y. **R6.2** Languages: **unverified** how. The tree builds only `usa`. The
-EUR version (English, German, French, Spanish, Italian) is another ROM with its own code. Either the message
-archives and fonts of another ROM loaded into this build (if their formats are the same), or the EUR version
-decompiled as a second version. Check with an EUR dump first. **R6.3** More 3D pictures a second: the game draws
+on X, pulling weeds and shaking trees on Y. **R6.2** Languages: no ROM at build time. The user's EUR ROM lies on the SD card beside `game.nds`
+(an `ACWW_*` option names it and the language), and the SDK's `FS_OpenFile` (R3.2) opens a language file from it
+instead: `/script/ENG/...` as `/script/GER/...`, `/item_info/always.bin` as `/item_info/GER/always.bin`, and so on
+(the log, 2026-11-01, has the layouts). Then the game code where the EUR data differs: the furniture names' record
+size, the fonts, the 2D pictures with text, the text boxes' widths. Done when a German game can be started, played and
+saved, and every difference found is written here. **R6.3** More 3D pictures a second: the game draws
 every frame, or pictures interpolated between the game's (needs R1).
 
 ## 4. Open questions (unverified)
@@ -140,3 +142,41 @@ every frame, or pictures interpolated between the game's (needs R1).
 - 2026-11-01: the goal changed (the user): an enhanced port, no bit-exactness, faster on a 3DS than on a DS, wide
   screen, stereoscopic 3D, QoL, new features, languages. The branch rebased onto `3ds` (097f0bc7); the plan
   rewritten around the choice of layer (section 1). Nothing built yet.
+- 2026-11-01: the user confirms P1-P5 and answers R0.0 (the pictures a second on the New 3DS; the Old 3DS should run
+  too). Old 3DS, for the expectations: a third of the CPU (268 MHz) and no core 2, so the GPU thread's work (2D,
+  compositing, the 3D's set-up) comes back onto cores 0 and 1. The geometry engine alone won't get it there; R2-R4
+  and fewer CPU-side 2D layers will be needed.
+- 2026-11-01: what the game asks of the 3D hardware (R0.2 for 3D). The PC build (x86-64, GCC 14), the save script's
+  12000 frames, `ACWW_HEADLESS=1 ACWW_FAST=1 ACWW_EXIT_FRAME=12000 ACWW_GPU3D_FEATURES=1` (the features' first
+  frames printed at exit): W-buffering from frame 1 and never a Z-buffered polygon; manual translucent sort (the
+  translucent polygons in the order sent, after the opaque ones); fog and "fog alpha only" both from frame 184;
+  far-plane polygons hidden, clipped and culled polygons, depth test equal, translucent depth update, the shininess
+  table not; textures A3I5, 16-colour, 4x4, A5I3; decal (from frame 2632) and modulation; texture coordinates from
+  texcoord and normal. The game reads the clip matrix (frame 190) and the vector matrix (2632); no box, position or
+  vector tests, no RAM counts. No RAM overflow, no full FIFO; commands do queue behind a swap (frame 0).
+- 2026-11-01: languages, from the user's EUR ROM (`ANIMAL_CROSS_ADMP01_00.nds` in the working directory, git-ignored;
+  game code ADMP, 16976 files, 42.1 MB of files, against USA Rev 1's 9504 files, 30.8 MB). Each language has its own
+  directories or names: `script/{ENG,FRN,GER,ITA,SPN}/` (the messages, `.bmg`), `item_info/<LANG>/`,
+  `ftr_info/<LANG>/`, `myOrg/<LANG>/myD.bin`, `font/fontC_*_{eng,frn,ger,ita,spn}.bin`,
+  `a_mes/a_mes_ttl_*_{eng,...}`, `sound_dataEUR.sdat` (USA: `sound_dataENG.sdat`). USA has the same names without the
+  language (`item_info/always.bin`) and `script/ENG/`. 9207 of the 9487 files both have are the same bytes; 280
+  differ (`bg/` 120, `menu/` 19, `script/` 54, `str/` 20, `PGls/` 27, `ftr/` 27, fonts 6, ...). The game's code opens
+  these files by path (`FS_OpenFile`, `"/script/ENG/message"`, `"/item_info/always.bin"` and so on in `src/main`),
+  so a runtime redirect by name works without the ROMs' file numbers matching. Known differences in format:
+  `ftr_info/<LANG>/dma.bin` is 65536 bytes, USA's `ftr_info/dma.bin` 57344 (the game reads 0x800 records of 0x1c
+  bytes: EUR's are 0x20 by size, **unverified**); `item_info` is the same size in both; `fontA`, `fontB`, `fontD`
+  and `fontC` differ (more glyphs: **unverified**). Not looked at yet: the EUR code's own differences (text lengths,
+  the save layout).
+- 2026-11-01: R1, the first two steps, in the `--direct` build (Azahar, the save script, unpaced: `ACWW_FPS=1`,
+  `ACWW_FAST=1`, a fixed clock, no save; means over the reports of frames 480-2640, the 3D start). Baseline (the
+  plain code): 46.5 frames a second; core 0's geometry engine 11.9 ms a frame (commands 5.2, vertices 4.7, lighting
+  2.1). (1) The GX FIFO's DMA blocks run in place, without the timing (commit 05d112e5): 51.1, commands 3.2; the 1501
+  composited pictures to frame 3000 (`ACWW_PICA_HASH`) the baseline's. (2) The polygons straight into the GPU's
+  vertex list (`g3p_polygon`): no clipping, screen positions, polygon RAM or sort on the CPU, the GPU clips; three
+  lists in turn; the fog alpha at the vertices in the GPU thread's job. In the run with screenshots (frames 1200,
+  2400, 2600, 9000, 11000; the baseline's the same way: 46.0): 58.0, vertices 2.0. The pictures against the
+  baseline's: 7-16 % of the pixels differ, all at 3D edges (leaves, the horizon), nothing missing; the 2D the same.
+  Differences by design: polygons crossing the near plane are drawn to w > 0 (the W-buffer's depth isn't the clip
+  z), polygons crossing the far plane with attr bit 12 not clipped there, no 1-dot polygon hiding. Not checked yet:
+  the plain 3DS build's pictures with the shader's new `target` (identity there; the run was stopped), hardware.
+  Next: lighting (2.0 ms) and the vertex transform in the vertex shader, then R3's register and ROM time.

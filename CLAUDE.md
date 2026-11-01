@@ -6,14 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Animal Crossing: Wild World (DS, USA Rev 1) as a native program: the game's decompiled C/C++ (`src/`, `include/`)
 compiled for the host, on top of a runtime that rebuilds the DS hardware in software (`modern/host/`). No emulator.
-This branch (`3ds`, fork `origin` = toomium/acww-decomp) adds a native Nintendo 3DS build; `upstream`
+Branch `3ds` (fork `origin` = toomium/acww-decomp) adds a native Nintendo 3DS build; `upstream`
 (7ucina/acww-decomp) is the PC port. The matching (ROM-rebuilding) decompilation lives at the `matching` tag, not here.
+**This branch is `3ds-real-port`** (from `3ds`): an enhanced 3DS port, not a faithful DS. It replaces the hardware model
+subsystem by subsystem (the `--direct` build, `N3DS_DIRECT`) and adds what a DS can't (wide screen, stereoscopic 3D,
+quality of life, languages). Its plan, rules and log: `docs/3ds-real-port.md`; they take precedence over docs/3ds.md's.
 
 Read first, depending on the task:
 - `docs/3ds.md`: the 3DS plan, rules (section 0) and dated work log (section 6: current state and next steps).
 - `docs/host.md`: how the runtime works, every `ACWW_*` option, and how changes are checked.
 - `docs/portability.md`: the PC port's plan and log.
-- `docs/3ds-real-port.md`: this branch's experiment (a real port instead of the rebuilt DS) and its log.
+- `docs/3ds-real-port.md`: this branch's plan (where the hardware model is replaced, and how), rules and log. Read first.
 
 ## Build
 
@@ -22,6 +25,8 @@ python3 tools/configure_host.py --cc gcc-14      # PC, x86-64 -> build_host64.ni
 ninja -f build_host64.ninja                       # build/host64_usa/acww <rom.nds>
 python3 tools/configure_host.py --os 3ds          # 3DS (devkitPro in /opt/devkitpro) -> build_host_3ds.ninja
 ninja -f build_host_3ds.ninja                     # build/host3ds_usa/acww.3dsx
+python3 tools/configure_host.py --os 3ds --direct # the enhanced port (N3DS_DIRECT) -> build_host_3ds_direct.ninja
+ninja -f build_host_3ds_direct.ninja              # build/host3ds_direct_usa/acww.3dsx
 ```
 
 Other targets: `--arch i386` (needs `--sysroot`), `--arch aarch64`, `--os windows|macos`, `--oracle` (melonDS linked in
@@ -32,7 +37,10 @@ ROM on this machine: `~/Dokumente/Animal Crossing - Wild World (USA) (Rev 1).nds
 
 ## Checking changes
 
-The rule: behaviour must not change. Runs are deterministic, so checks are byte-for-byte comparisons.
+The PC builds and the plain 3DS build: behaviour must not change. Runs are deterministic, so checks are byte-for-byte
+comparisons. The `--direct` build need not match them (docs/3ds-real-port.md section 0): its pictures and sound are
+compared by eye and ear, its speed with `ACWW_FPS` against the plain 3DS build; for a step that shouldn't change the
+gameplay, the save file and `ACWW_RAMHASH` of the game's memory can still show that the game logic runs the same.
 - `tools/host_oracle.sh <binary> quick|play|record`: screenshots and sound against reference captures
   (`ORACLE_DIR`, `ACWW_ROM` set as in docs/3ds.md T0.2).
 - The save script: `tools/host_play_script.py save` emits `ACWW_KEYS` etc.; compare screenshots (`ACWW_SHOT`), save
@@ -69,15 +77,21 @@ The rule: behaviour must not change. Runs are deterministic, so checks are byte-
   (`tools/host_protos.py`; regenerate after changing a signature). `PROTO_LOCAL_<name>` marks a unit's own
   declaration that still mismatches.
 - **3DS-only build differences** live in `tools/configure_host.py` (`N3DS`, `N3DS_NATIVE`: the files using libctru keep
-  `-fshort-enums`; the rest uses the game's 32-bit enums).
+  `-fshort-enums`; the rest uses the game's 32-bit enums). `--direct` defines `N3DS_DIRECT` for the game and the runtime.
+- **Direct 3D** (`N3DS_DIRECT`): `gpu3d_geom.c` keeps the matrices, lighting, culling and the game's reads, runs the GX
+  FIFO's DMA blocks in place without timing, and hands each polygon to `gpu3d_pica.c` (`g3p_polygon`), which writes
+  it into the GPU's vertex list in clip space; the GPU clips it.
 
-## Rules (docs/3ds.md section 0)
+## Rules (docs/3ds.md section 0; on this branch docs/3ds-real-port.md section 0 changes them)
 
 - Shared changes (`src/`, `include/`, shared runtime files, `tools/`) go in their own commits, separate from 3DS-only
   files, each useful alone (upstream PR candidates), and must not change the PC builds' behaviour.
 - The game sources are not changed for the 3DS; an ARM32 problem in them is a portability bug fixed for every build.
+  On this branch they may change for the port: small changes under `#ifdef N3DS_DIRECT`, large ones in new files
+  under `modern/n3ds/`; a bug every build has is still fixed on `3ds` in its own commit.
 - Options stay `ACWW_*` environment variables (on the 3DS via `acww.cfg`); no second options system.
 - 3DS API calls come from the installed headers (`/opt/devkitpro/libctru/include`) and `/opt/devkitpro/examples/3ds`,
   never from memory.
 - Match the surrounding style: comments say what and why in plain sentences; C11 for the runtime.
-- Record findings in docs/3ds.md's log with the date; don't add unchecked facts (mark them **unverified**).
+- Record findings in the log with the date (on this branch docs/3ds-real-port.md's); don't add unchecked facts (mark
+  them **unverified**).

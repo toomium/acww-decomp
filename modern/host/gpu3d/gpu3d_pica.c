@@ -57,6 +57,7 @@ static C3D_Tex sPic[2];
 static C3D_RenderTarget *sPicTarget[2];
 static int sPicture = -1;
 static PVertex *sVerts;
+static s8 sTargetLoc;  // (the vertex shader's `target`)
 static u32 *sColorOut, *sDepthOut;  // the read-back pictures (linear memory)
 
 // ---- the texture cache
@@ -189,13 +190,99 @@ static GPU_TEXTURE_WRAP_PARAM wrap(u32 tp, int axis) {
     return tp >> (18 + axis) & 1 ? GPU_MIRRORED_REPEAT : GPU_REPEAT;
 }
 
+#ifdef N3DS_DIRECT
+// ---- the direct build's vertex lists (docs/3ds-real-port.md R1): the polygons as the geometry engine makes them
+// (g3p_polygon, on the game's thread), in batches of the same state, drawn opaque first, then translucent, each in
+// the order made (the game sorts its translucent polygons itself: manual sort). Three lists in turn: one filled, one
+// drawn, and the one drawn before it.
+// shortcut: the list filled next is the one drawn two swaps ago, taken as done by the GPU (a swap is a frame or more,
+// a 3D picture 2-4 ms of the GPU's); wait for the GPU there if it ever isn't.
+enum { LISTS = 3, LIST_VERTS = MAX_POLYGONS * 6 };  // (a quad is two triangles)
+typedef struct {
+    u32 attr, texparam, texpal;
+    u8 trans, wbuffer;
+    int first, count;  // its vertices in the list
+} Batch;
+typedef struct {
+    PVertex *v;
+    int nv, npoly, nbatch;
+    Batch batch[MAX_POLYGONS];
+} List;
+static List sList[LISTS];
+static int sFill;
+// the viewport: the DS screen's clip coordinates from the geometry engine's (x' = x * sVx[0] + w * sVx[1], and y')
+static float sVx[2] = {1, 0}, sVy[2] = {1, 0};
+
+void g3p_viewport(const u32 vp[6]) {
+    // (pixels: x = (x / w + 1) * width / 2 + x1, y = (1 - y / w) * height / 2 + top; the screen's clip space has
+    // x / w = x / 128 - 1, y / w = 1 - y / 96)
+    sVx[0] = (float)vp[4] / 256, sVx[1] = (float)(vp[4] + 2 * vp[0]) / 256 - 1;
+    sVy[0] = (float)vp[5] / 192, sVy[1] = 1 - (float)vp[5] / 192 - (float)vp[3] / 96;
+}
+
+void g3p_polygon(G3Vertex *const *v, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer) {
+    List *l = &sList[sFill];
+    if (!l->v || l->npoly >= MAX_POLYGONS || l->nv + (n - 2) * 3 > LIST_VERTS) return;
+    l->npoly++;
+    Batch *b = l->nbatch ? &l->batch[l->nbatch - 1] : 0;
+    if (!b || b->attr != attr || b->texparam != texparam || b->texpal != texpal || b->wbuffer != wbuffer) {
+        b = &l->batch[l->nbatch++];
+        b->attr = attr, b->texparam = texparam, b->texpal = texpal, b->trans = (u8)translucent;
+        b->wbuffer = (u8)wbuffer, b->first = l->nv, b->count = 0;
+    }
+    static const float kSize[8] = {1 / 128.0f, 1 / 256.0f, 1 / 512.0f, 1 / 1024.0f,
+                                   1 / 2048.0f, 1 / 4096.0f, 1 / 8192.0f, 1 / 16384.0f};  // (1 / (16 * size))
+    const float k = 1 / 4096.0f, k6 = 1 / 63.0f, tw = kSize[texparam >> 20 & 7], th = kSize[texparam >> 23 & 7];
+    // (depth test "equal" passes within 0x200 on the DS, gpu3d_raster.c depth_pass: moved nearer by that, then less or
+    // equal)
+    const float eq = attr & 0x4000 ? 0x200 / 16777215.0f : 0;
+    u32 pa = attr >> 16 & 31;
+    float alpha = (float)(pa ? pa : 31) * (1.0f / 31.0f);
+    PVertex pv[10];
+    for (int i = 0; i < n; i++) {
+        const G3Vertex *x = v[i];
+        PVertex *o = &pv[i];
+        float w = (float)x->pos[3] * k;
+        o->pos[0] = (float)x->pos[0] * k * sVx[0] + w * sVx[1];
+        o->pos[1] = (float)x->pos[1] * k * sVy[0] + w * sVy[1];
+        if (wbuffer) {  // (the depth W itself, 24 bits: not divided by w, C3D_DepthMap; clipped at w > 0 only)
+            float d = (float)x->pos[3] * (1 / 16777215.0f) - eq;
+            o->pos[2] = d < 0 ? 0 : d > 1 ? -1 : -d;
+        } else {  // (z / w from -1 to 1 into the GPU's 0 to -1: the near and far planes the DS's)
+            o->pos[2] = ((float)x->pos[2] * k + w) * -0.5f + eq * w;
+        }
+        o->pos[3] = w;
+        for (int c = 0; c < 3; c++) o->col[c] = (float)(x->color[c] >> 3) * k6;
+        o->col[3] = alpha;
+        // (v from the top: the GPU's v = 1 is the texture's first row in memory, as tile() lays it out)
+        o->tc[0] = (float)x->tex[0] * tw, o->tc[1] = 1.0f - (float)x->tex[1] * th;
+    }
+    PVertex *out = l->v + l->nv;
+    for (int i = 1; i + 1 < n; i++) *out++ = pv[0], *out++ = pv[i], *out++ = pv[i + 1];
+    l->nv += (n - 2) * 3;
+    b->count += (n - 2) * 3;
+}
+
+int g3p_swap(void) {
+    int handed = sFill;
+    sFill = (sFill + 1) % LISTS;
+    sList[sFill].nv = sList[sFill].npoly = sList[sFill].nbatch = 0;
+    return handed;
+}
+#endif
+
 // ---- set-up
 int g3p_init(void) {
     if (sTarget) return 1;
     pdisp_gsp_init();  // (the frontend's gfxInit may come before or after)
     if (!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE * 4)) return 0;
     sTarget = C3D_RenderTargetCreate(W, H, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+#ifdef N3DS_DIRECT
+    sVerts = sList[0].v = linearAlloc(LISTS * LIST_VERTS * sizeof(PVertex));
+    for (int i = 1; i < LISTS; i++) sList[i].v = sList[0].v ? sList[0].v + i * LIST_VERTS : 0;
+#else
     sVerts = linearAlloc(MAX_VERTS * sizeof(PVertex));
+#endif
     sColorOut = linearAlloc(W * H * 4);
     sDepthOut = linearAlloc(W * H * 4);
     sDvlb = DVLB_ParseFile((u32 *)gpu3d_pica_shbin, gpu3d_pica_shbin_size);
@@ -208,6 +295,7 @@ int g3p_init(void) {
     }
     shaderProgramInit(&sProgram);
     shaderProgramSetVsh(&sProgram, &sDvlb->DVLE[0]);
+    sTargetLoc = shaderInstanceGetUniformLocation(sProgram.vertexShader, "target");
     return 1;
 }
 
@@ -262,6 +350,21 @@ static void apply(const State *s, const G3RenderState *r) {
         C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO, GPU_ONE, GPU_ZERO);
     }
     C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
+}
+
+static void state_of(State *s, const G3RenderState *r, u32 attr, u32 texparam, u32 texpal, int trans, int wbuffer) {
+    memset(s, 0, sizeof *s);
+    int fmt = texparam >> 26 & 7;
+    if (fmt && (r->dispcnt & 1)) s->tex = texture(texparam, texpal);
+    s->mode = !s->tex ? 0 : (attr >> 4 & 3) == 1 ? 2 : 1;
+    if (s->tex) s->wrap = (u32)wrap(texparam, 0) | (u32)wrap(texparam, 1) << 8;
+    s->trans = trans;
+    s->blend = (r->dispcnt & 8) != 0;
+    s->depthEq = (attr & 0x4000) != 0;
+    s->depthWrite = !trans || (attr & 0x800);
+    s->fog = attr >> 15 & 1;
+    s->id = (int)(attr >> 24 & 63);
+    s->wbuffer = wbuffer;
 }
 
 static u32 rgb5_to_6(u32 c) { return c ? c * 2 + 1 : 0; }
@@ -319,7 +422,6 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
     int direct = color == 0, fogAlpha = direct && (r->dispcnt & 0xc0) == 0xc0;
     u32 fa = r->fogColor >> 16 & 31;
     C3D_RenderTarget *target = direct ? sPicTarget[sJobPicture] : sTarget;
-    const float hy = direct ? 256.0f : (float)H;  // (the texture's rows: lines below 192 aren't drawn)
     if (texChanged) {
         track(img, sImgCopy, sImgVer, IMG_SIZE);
         track(pal, sPalCopy, sPalVer, PAL_SIZE);
@@ -342,6 +444,21 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
                           cd | (cc & 0x8000 ? 0x80u : 0) << 24);
     C3D_FrameDrawOn(target);
     C3D_BindProgram(&sProgram);
+    // (the wide view: the DS's picture GPU3D_WIDE_X / Y in from the corner of the 512 x 256 picture)
+    const int wide = direct && gpu3d_wide();
+#ifdef N3DS_DIRECT  // (the vertices in the DS screen's clip space: into the picture's)
+    {
+        float tw = direct ? (wide ? 512.0f : 256.0f) : W, th = direct ? 256.0f : H;
+        float ox = wide ? GPU3D_WIDE_X : 0, oy = wide ? GPU3D_WIDE_Y : 0;
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, sTargetLoc, 256 / tw, 0, 0, (256 + 2 * ox) / tw - 1);
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, sTargetLoc + 1, 0, 192 / th, 0, 1 - (192 + 2 * oy) / th);
+    }
+#else  // (the vertices in the picture's clip space already)
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, sTargetLoc, 1, 0, 0, 0);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, sTargetLoc + 1, 0, 1, 0, 0);
+#endif
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, sTargetLoc + 2, 0, 0, 1, 0);
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, sTargetLoc + 3, 0, 0, 0, 1);
     C3D_AttrInfo *ai = C3D_GetAttrInfo();
     AttrInfo_Init(ai);
     AttrInfo_AddLoader(ai, 0, GPU_FLOAT, 4);
@@ -349,10 +466,48 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
     AttrInfo_AddLoader(ai, 2, GPU_FLOAT, 2);
     C3D_BufInfo *bi = C3D_GetBufInfo();
     BufInfo_Init(bi);
+#ifdef N3DS_DIRECT
+    List *l = &sList[r->list];
+    BufInfo_Add(bi, l->v, sizeof(PVertex), 3, 0x210);
+#else
     BufInfo_Add(bi, sVerts, sizeof(PVertex), 3, 0x210);
+#endif
     C3D_CullFace(GPU_CULL_NONE);      // (the geometry engine culled already)
     for (int i = 2; i < 6; i++) C3D_TexEnvInit(C3D_GetTexEnv(i));
 
+#ifdef N3DS_DIRECT
+    // the fog worked into the alpha (as below), from the depth at each vertex
+    if (fogAlpha)
+        for (int k = 0; k < l->nbatch; k++) {
+            const Batch *b = &l->batch[k];
+            if (!(b->attr & 0x8000)) continue;
+            u32 pa = b->attr >> 16 & 31, a = pa ? pa : 31;
+            for (PVertex *o = l->v + b->first, *e = o + b->count; o < e; o++) {
+                float z = b->wbuffer ? -o->pos[2] : -o->pos[2] / o->pos[3];
+                u32 d = (u32)fog_density(r, (s32)(z < 0 ? 0 : z > 1 ? 16777215 : z * 16777215));
+                o->col[3] = (float)((fa * d + a * (128 - d)) >> 7) * (1.0f / 31.0f);
+            }
+        }
+    {
+        State cur;
+        int have = 0;
+        for (int pass = 0; pass < 2; pass++)  // (opaque, then translucent)
+            for (int k = 0; k < l->nbatch; k++) {
+                const Batch *b = &l->batch[k];
+                if (b->trans != pass) continue;
+                State s;
+                state_of(&s, r, b->attr, b->texparam, b->texpal, b->trans, b->wbuffer);
+                if (!have || memcmp(&s, &cur, sizeof s)) {
+                    apply(&s, r);
+                    cur = s;
+                    have = 1;
+                }
+                C3D_DrawArrays(GPU_TRIANGLES, b->first, b->count);
+            }
+        GSPGPU_FlushDataCache(l->v, (u32)l->nv * sizeof(PVertex));
+    }
+#else
+    const float hy = direct ? 256.0f : (float)H;  // (the texture's rows: lines below 192 aren't drawn)
     int nv = 0, first = 0;
     State cur;
     int have = 0;
@@ -360,18 +515,7 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
         const G3Polygon *p = r->poly[k];
         if (p->nv < 3 || nv + (p->nv - 2) * 3 > MAX_VERTS) continue;
         State s;
-        memset(&s, 0, sizeof s);
-        int fmt = p->texparam >> 26 & 7;
-        if (fmt && (r->dispcnt & 1)) s.tex = texture(p->texparam, p->texpal);
-        s.mode = !s.tex ? 0 : (p->attr >> 4 & 3) == 1 ? 2 : 1;
-        if (s.tex) s.wrap = (u32)wrap(p->texparam, 0) | (u32)wrap(p->texparam, 1) << 8;
-        s.trans = p->translucent;
-        s.blend = (r->dispcnt & 8) != 0;
-        s.depthEq = (p->attr & 0x4000) != 0;
-        s.depthWrite = !p->translucent || (p->attr & 0x800);
-        s.fog = p->attr >> 15 & 1;
-        s.id = (int)(p->attr >> 24 & 63);
-        s.wbuffer = p->wbuffer;
+        state_of(&s, r, p->attr, p->texparam, p->texpal, p->translucent, p->wbuffer);
         if (!have || memcmp(&s, &cur, sizeof s)) {
             if (nv > first) C3D_DrawArrays(GPU_TRIANGLES, first, nv - first);
             first = nv;
@@ -383,8 +527,6 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
         // (multiplications by reciprocals: the compiler keeps float divisions as divisions, which are slow here)
         static const float kSize[8] = {1 / 128.0f, 1 / 256.0f, 1 / 512.0f, 1 / 1024.0f,
                                        1 / 2048.0f, 1 / 4096.0f, 1 / 8192.0f, 1 / 16384.0f};  // (1 / (16 * size))
-        // (the wide view: the DS's picture GPU3D_WIDE_X / Y in from the corner of the 512 x 256 picture)
-        const int wide = direct && gpu3d_wide();
         const float kx = 2.0f / (16 * (wide ? 512 : W)), ky = 2.0f / (16 * hy), kz = 1.0f / 16777215.0f, k6 = 1.0f / 63.0f;
         const float ox = wide ? GPU3D_WIDE_X * 16.0f : 0, oy = wide ? GPU3D_WIDE_Y * 16.0f : 0;
         float alpha = (float)(pa ? pa : 31) * (1.0f / 31.0f);
@@ -413,6 +555,7 @@ static void render(const G3RenderState *r, const u8 *img, const u8 *pal, int tex
     }
     if (nv > first) C3D_DrawArrays(GPU_TRIANGLES, first, nv - first);
     GSPGPU_FlushDataCache(sVerts, (u32)nv * sizeof(PVertex));
+#endif
     if (direct) {  // (the GPU draws while the CPU goes on: the compositing waits for it)
         C3D_FrameEnd(0);
         return;

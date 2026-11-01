@@ -49,9 +49,15 @@ static int sStripValid;                 // ... if the next polygon can share the
 static s32 sPosResult[4];
 static s16 sVecResult[3];
 
-// the two banks of vertex and polygon RAM: one filled by the geometry engine, one drawn
-static G3Vertex sVertexRam[2][MAX_VERTICES];
-static G3Polygon sPolyRam[2][MAX_POLYGONS];
+// the two banks of vertex and polygon RAM: one filled by the geometry engine, one drawn (the direct build: the GPU's
+// vertex lists instead, gpu3d_pica.c)
+#ifdef N3DS_DIRECT
+enum { RAM_VERTICES = 1, RAM_POLYGONS = 1 };
+#else
+enum { RAM_VERTICES = MAX_VERTICES, RAM_POLYGONS = MAX_POLYGONS };
+#endif
+static G3Vertex sVertexRam[2][RAM_VERTICES];
+static G3Polygon sPolyRam[2][RAM_POLYGONS];
 static int sBank;
 static int sNumVerts, sNumPolys, sNumOpaque;
 static int sRamOverflow;
@@ -639,6 +645,28 @@ static void submit_polygon(void) {
         return;
     }
 
+#ifdef N3DS_DIRECT
+    {   // the direct build: the polygon straight into the GPU's list (g3p_polygon), which clips it; here only the DS's
+        // far-plane rule (crossing it: hidden unless attr bit 12) and what lies wholly beyond the near or far plane
+        int far = 0, near = 0;
+        for (int i = 0; i < nv; i++) {
+            far += v[i]->pos[2] > v[i]->pos[3];
+            near += v[i]->pos[2] < -v[i]->pos[3];
+        }
+        if ((far && !(attr & 0x1000)) || far == nv || near == nv) {
+            sPolyOutcome = far ? 3 : 2;
+            return;
+        }
+        if (sNumPolys >= MAX_POLYGONS) { sPolyOutcome = 5; return; }
+        u32 alpha = attr >> 16 & 31;
+        int fmt = sTexParam >> 26 & 7;
+        g3p_polygon(v, nv, attr, sTexParam, sTexPal, (alpha > 0 && alpha < 31) || fmt == 1 || fmt == 6,
+                    sFlushParam >> 1 & 1);
+        sNumPolys++;
+        sNumVerts += nv;
+        return;
+    }
+#endif
     G3Vertex *cv;
     int clipped;
     sFarHidden = 0;
@@ -1065,6 +1093,9 @@ static void execute(u8 cmd, const u32 *p) {
         sViewport[3] = (191 - (p[0] >> 24 & 0xff)) & 0xff;
         sViewport[4] = (sViewport[2] - sViewport[0] + 1) & 0x1ff;
         sViewport[5] = ((p[0] >> 24 & 0xff) - sViewport[1] + 1) & 0xff;
+#ifdef N3DS_DIRECT
+        g3p_viewport(sViewport);
+#endif
         break;
     case 0x70: g3_feature(F_BOX_TEST); box_test(p); break;
     case 0x71:
@@ -1120,6 +1151,11 @@ static void do_swap(void) {
     if (r->wbuffer) g3_feature(F_WBUFFER);
     else if (r->npoly) g3_feature(F_ZBUFFER_POLYS);
     if (r->manualSort) g3_feature(F_MANUAL_SORT);
+#ifdef N3DS_DIRECT
+    r->list = g3p_swap();
+    r->npoly = 0;
+    sNumPolys = 0;
+#endif
     for (int i = 0; i < sNumPolys; i++) {
         G3Polygon *p = &sPolyRam[sBank][i];
         if (r->manualSort && p->translucent) p->sortKey = 0x10000u;  // (translucent ones in submission order)

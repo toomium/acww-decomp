@@ -60,6 +60,7 @@ typedef struct G3RenderState {
     u32 fogColor;
     u16 fogOffset;
     u8 fogTable[32];
+    int list;  // the direct build (N3DS_DIRECT): the GPU's vertex list of these polygons (g3p_swap); poly is empty
 } G3RenderState;
 
 extern G3RenderState gG3Render;
@@ -90,6 +91,12 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
 void *g3p_picture(void);  // the last picture drawn for the GPU's compositing (a C3D_Tex), NULL none
 void g3p_wait(void);  // until a picture being drawn (by the GPU thread) is done: before its list or textures change
 void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out);  // (gpu3d_raster.c)
+// the direct build (N3DS_DIRECT, docs/3ds-real-port.md R1): the geometry engine's polygons go straight into the GPU's
+// vertex list, in the DS screen's clip space (the viewport applied, not clipped: the GPU clips), while the list
+// before is drawn
+void g3p_viewport(const u32 vp[6]);  // VIEWPORT: x1, y1 (from the top), x2, y2, width, height (gpu3d_geom.c's sViewport)
+void g3p_polygon(G3Vertex *const *v, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer);
+int g3p_swap(void);  // the list filled since the last swap handed over (its number, G3RenderState.list), a new one begun
 
 // feature census (gpu3d_geom.c)
 void g3_feature(int id);
