@@ -8,6 +8,8 @@
 // Entries are drawn in order; a later entry's pixel replaces an earlier one only if its priority is higher
 // (numerically lower), so at equal priority the lower entry is in front.
 
+#include <stdio.h>
+
 #include "gpu2d_internal.h"
 
 static const u8 kObjW[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
@@ -167,10 +169,16 @@ int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int 
         if (affine && (a0 & 0x200)) bw *= 2, bh *= 2;
         s32 x0 = a1 & 0x1ff, y0 = a0 & 0xff;
         if (x0 >= 256) x0 -= 512;
-        if (y0 + bh > 256) y0 -= 256;  // (Y wraps around at 256)
+        // (Y wraps around at 256; shortcut: a box over both the bottom and line 0, only a 128-tall double-size one at
+        // Y 129-191, shows its top part only: give it a second sprite if one is seen)
+        if (y0 >= SCREEN_H && y0 + bh > 256) y0 -= 256;
         if (x0 >= SCREEN_W || x0 + bw <= 0 || y0 >= SCREEN_H) continue;
         if (*ax + bw > GPU2D_ATLAS_W) *ax = 0, *ay += *rowH, *rowH = 0;
-        if (*ay + bh > GPU2D_ATLAS_H) continue;  // shortcut: an atlas full of OBJs leaves the rest out; grow it if seen
+        if (*ay + bh > GPU2D_ATLAS_H) {  // shortcut: an atlas full of OBJs leaves the rest out; grow it if this is seen
+            static unsigned dropped;
+            if (dropped++ % 600 == 0) fprintf(stderr, "gpu2d: the sprite atlas is full: OBJs left out (%u so far)\n", dropped);
+            continue;
+        }
         Gpu2dSprite *s = &out[n++];
         s->x = (int16_t)x0, s->y = (int16_t)y0, s->w = (uint16_t)bw, s->h = (uint16_t)bh;
         s->u = (uint16_t)*ax, s->v = (uint16_t)*ay, s->prio = (uint8_t)(a2 >> 10 & 3), s->window = mode == 2;
