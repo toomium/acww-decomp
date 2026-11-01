@@ -603,13 +603,14 @@ static int render_hblank(int line, void *context) {
     HOST_PROF(PROF_GAME);  // (the game's H-blank work)
     return host_hblank(line);
 }
-// ACWW_FRAMESKIP=<n>: the screens drawn every n + 1 frames (the 3DS's default: 1, every other one; elsewhere 0).
+// ACWW_FRAMESKIP=<n>: the screens drawn every n + 1 frames (the 3DS's default: 1, every other one; elsewhere and in
+// the enhanced port, N3DS_DIRECT, 0).
 // The game runs every frame as before - its H-blank work line by line, the geometry engine - only the pictures are
 // skipped; the 3D one is drawn in the frame before the screens' (the 2D renderer shows the last frame's 3D picture)
 static int frameskip(void) {
     static int n = -1;
     if (n < 0) {
-#ifdef __3DS__
+#if defined(__3DS__) && !defined(N3DS_DIRECT)
         n = 1;
 #else
         n = 0;
