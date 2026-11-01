@@ -30,6 +30,7 @@ void gpu3d_reset(void);
 void gpu3d_write8(uint32_t addr, uint8_t value);
 void gpu3d_write16(uint32_t addr, uint16_t value);
 void gpu3d_write32(uint32_t addr, uint32_t value);
+void gpu3d_write32_n(uint32_t addr, const uint32_t *value, uint32_t n);  // n words to one address
 // the 3D engine's status and results: RDLINES_COUNT (0x04000320), GXSTAT, RAM_COUNT, the position and vector test
 // results, CLIPMTX_RESULT and VECMTX_RESULT (0x04000600-0x040006a3); word addresses
 uint32_t gpu3d_read32(uint32_t addr);

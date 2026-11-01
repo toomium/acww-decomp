@@ -284,7 +284,7 @@ void render_write32_n(u32 addr, const u32 *v, u32 n) {
         return;
     }
     HOST_PROF(PROF_GEOM);
-    for (u32 i = 0; i < n; i++) gpu3d_write32(addr, v[i]);
+    gpu3d_write32_n(addr, (const uint32_t *)v, n);  // (u32 is unsigned int; uint32_t on the 3DS unsigned long)
 }
 
 u32 render_read32(u32 addr) {

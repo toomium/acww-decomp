@@ -1089,6 +1089,10 @@ static void exec_entry(Entry e) {
     if (sExecCount >= need) {
         u8 c = (u8)sExecCmd;
         sExecCmd = -1;
+#ifdef N3DS_DIRECT  // (no busy time: GXSTAT never says busy, the game doesn't wait)
+        execute(c, sExecParams);
+        return;
+#endif
         timing_before(c);
         execute(c, sExecParams);
         timing_after(c);
@@ -1194,6 +1198,34 @@ void gpu3d_write32(uint32_t addr, uint32_t v) {
         return;
     }
     drain();
+}
+
+void gpu3d_write32_n(uint32_t addr, const uint32_t *v, uint32_t n) {
+    uint32_t i = 0;
+#ifdef N3DS_DIRECT
+    // the direct build: a block for the GX FIFO decoded where it lies, each command run with its parameters in place.
+    // The FIFO only while a swap waits (the commands then wait in it) or when a packed word's parameters go on in the
+    // next block: from there word by word as below.
+    if (addr == 0x04000400 && sGeomOn && !sFlushPending && !sPackParamsLeft && !sPipeN && !sFifoN && sExecCmd < 0) {
+        while (i < n && !sFlushPending) {
+            u32 cmds = v[i], need = 0;
+            for (u32 c = cmds; c; c >>= 8) need += kParams[c & 0xff];
+            if (i + 1 + need > n) break;
+            i++;
+            for (int k = 0; cmds; k++, cmds >>= 8) {
+                u8 c = cmds & 0xff;
+                if (sFlushPending) {  // (SWAP_BUFFERS in this word: its other commands queue behind it)
+                    sPackCmds = cmds, sPackLeft = 4 - k;
+                    pack_advance();
+                    break;
+                }
+                if (c) execute(c, &v[i]);  // (00: a NOP)
+                i += kParams[c];
+            }
+        }
+    }
+#endif
+    for (; i < n; i++) gpu3d_write32(addr, v[i]);
 }
 
 static u32 gxstat(void) {
