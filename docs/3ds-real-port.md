@@ -18,10 +18,11 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 | Subsystem | Now | What is still rebuilt | Cost | Next |
 |---|---|---|---|---|
 | 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4, core 2 about 2 (textures, batches), GPU 1.3 | lighting and transform in the vertex shader (R1) |
-| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures (as before); all drawn on the PICA | the per-line record on core 0 (the registers each line, the 2D VRAM banks copied each frame, the H-blank palette changes); the per-line state for the effects | Azahar, not yet the New 3DS: core 0 about 5, core 2 1.3 (start) / 5.6 (name entry) | the record on core 0: VRAM not copied whole every frame |
+| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | Azahar: core 0 0.7, core 2 0.7 (start) / 5.6 (name entry) | - |
 | Sound | LLE | the ARM7 sequencer and the SPU's 16 channels mixed on the CPU, one stream to ndsp | core 0 about 1.2; crackles when frames are slow | HLE (commands): the channels on ndsp, R2 |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
 | Files, ROM, save | HLE (SDK): the save memory's stream commands (`CARDi_RequestStreamCommand`) and the ROM reads (`CARDi_ReadRom`, all of FS's) done at once in the host; the ROM image read ahead in the background | the save file written to the SD card on the game's thread (one write, 30 frames after the last change); the identify and the other card requests through the PXI | loads in Azahar still about 1.3 s at the first big one: ROM about 0.5 s (the read-ahead only runs while the game waits), "registers" about 0.55 s (**unverified**: the VRAM banks' remapping) | the load's register time; the save file's write in the background |
+| VRAM | HLE (SDK) for the texture uploads (`GX_LoadTex`, `GX_LoadTexPltt` straight into the banks, no remapping); otherwise LLE | the banks and the CPU's windows (vram.c): remapped at a VRAMCNT change, the mapped granules flushed each frame | Azahar: 0.1 a frame, 0 at the first big load (was 410 ms) | - |
 | Input, clock, NVRAM | LLE (cheap) | the PXI round trip | negligible | R3 |
 | Threads, the game's frame | kept (game logic) | - | - | - |
 
@@ -268,3 +269,13 @@ every frame, or pictures interpolated between the game's (needs R1).
   which map the texture banks to the LCDC window and back: vram.c copies each bank's granules between the window and
   the bank at every VRAMCNT change. Also on core 0 every frame: host_vram_flush copies every CPU-mapped granule back
   to its bank (render.c), and the 2D record copies the 2D banks again (gpu2d.c record_end).
+- 2026-11-01: VRAM (the user: before the sound). `ACWW_FPS` has a VRAM part now (vram.c's copies). Azahar, the save
+  script to frame 3000: at the first big load (frame 183) VRAM 410 ms of about 1260; 0.59 ms a frame otherwise. The
+  game maps only the small banks F-I for 2D (VRAMCNT A-I 83 8b 93 82 / 83 81 82 ...: A-C textures, E texture
+  palettes), so the 2D record's copy is about 80 KB a frame. (1) The texture uploads at the SDK level (commit
+  8bcfebd7): GX_BeginLoadTex leaves the banks mapped, GX_LoadTex(Pltt) copies straight into the banks' memory;
+  the load 1260 -> about 850 ms in Azahar (VRAM 410 -> 0), VRAM 0.59 -> 0.12 ms a frame; pixel for pixel, and on
+  the PC the save script's pictures and save file the same. (2) Core 0's 2D record, timed (an instrumented build, not
+  committed): most of it compared the 4 KB of palettes and OAM after every line, for the sky's H-blank (the game's
+  only one: the backdrop colours and registers). Only the two backdrop words now:
+  core 0's 2D 2.44 -> 0.70 ms a frame, Azahar 61 -> 68 game frames a second; pixel for pixel. Next: the sound (R2).
