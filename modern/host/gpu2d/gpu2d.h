@@ -42,17 +42,23 @@ typedef struct Gpu2dLineState {
     uint8_t prio[4];         // BG0-3's priority
     uint8_t white;           // 1: the line is white (display off, forced blank, engine off; VRAM and main memory
                              // display, which the game doesn't use, too)
+    // with sprites (Gpu2dLayers.sprite; else 0): the windows' shapes instead of Gpu2dLayers.region: WIN0H, WIN1H,
+    // and which of windows 0 and 1 the line is inside vertically (bits 0, 1)
+    uint16_t winh[2];
+    uint8_t winV;
 } Gpu2dLineState;
 // The OBJs as sprites (the 3DS's direct build, docs/3ds-real-port.md R4): with Gpu2dLayers.sprite set, the OBJs
 // aren't drawn line by line into `obj`: each shown OBJ's box comes once a frame as its pixels in the atlas `sprite`
 // (GPU2D_ATLAS_W x GPU2D_ATLAS_H, RGBA8 as `obj`'s with alpha 255, 0 transparent; affine ones transformed) and its
-// place, for the GPU to draw. OBJ-window OBJs aren't sprites: they still shape the windows' regions.
+// place, for the GPU to draw; the windows too (Gpu2dLineState.winh, winV; the OBJ window from its OBJs' sprites),
+// not as Gpu2dLayers.region. (A BG the CPU draws then has the windows applied without the OBJ window.)
 enum { GPU2D_ATLAS_W = 512, GPU2D_ATLAS_H = 256 };
 typedef struct Gpu2dSprite {
     int16_t x, y;   // the box's top left on the screen (y below 0: wrapped round from the bottom)
     uint16_t w, h;  // the box (twice the OBJ's size for a double-size affine one)
     uint16_t u, v;  // its pixels in the atlas
     uint8_t prio;
+    uint8_t window;  // 1: an OBJ-window OBJ (it shapes the OBJ window, isn't shown)
 } Gpu2dSprite;
 typedef struct Gpu2dLayers {
     uint16_t *bg[2][4];      // per engine BG0-3: RGBA5551 (r << 11 | g << 6 | b << 1 | 1), 0 transparent

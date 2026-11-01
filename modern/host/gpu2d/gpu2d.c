@@ -489,8 +489,16 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
     if (!sTo5551[1])
         for (u32 c = 0; c < 0x8000; c++) sTo5551[c] = (u16)((c & 31) << 11 | (c >> 5 & 31) << 6 | (c >> 10 & 31) << 1 | 1);
     u8 mask[SCREEN_W], region[SCREEN_W];
-    window_line(e, &e->obj, mask, region);
-    obj_mosaic_x(e, &e->obj);
+    if (sLayers->sprite) {  // (the windows' shapes go to the GPU: only the CPU's BGs need the mask)
+        static const ObjLine kNoObj;
+        int cpuBg = 0;
+        for (int n = 0; n < 4; n++) cpuBg |= (dispcnt & 0x100u << n) && !(ls->gpuBg >> n & 1) && !(n == 0 && (dispcnt & 8) && e->num == 0);
+        if (cpuBg) window_line(e, &kNoObj, mask, NULL);
+        else window_advance(e);
+    } else {
+        window_line(e, &e->obj, mask, region);
+        obj_mosaic_x(e, &e->obj);
+    }
     int is3d = e->num == 0 && (dispcnt & 8);
     if (is3d && (dispcnt & 0x100)) gpu2d_feature(e, F_3D);
     for (int n = 0; n < 4; n++) {
@@ -514,7 +522,7 @@ static void layers_line(Engine *e, int line, Gpu2dLineState *ls) {
         }
     }
     sLayers->objPrio[e->num][line] = (u8)prios;
-    if (dispcnt & 0xe000) {
+    if ((dispcnt & 0xe000) && !sLayers->sprite) {
         u32 *d = sLayers->region[e->num] + line * SCREEN_W;
         for (int x = 0; x < SCREEN_W; x++) d[x] = 63u + 64u * region[x];
     }
@@ -543,6 +551,10 @@ static void render_line(Engine *e, const Gpu2dFrameInput *in, int line) {
         if (mode >= 2) gpu2d_feature(e, mode == 2 ? F_DISPLAY_VRAM : F_DISPLAY_FIFO);
         if (dispcnt & 0x80) gpu2d_feature(e, F_FORCED_BLANK);
         ls->winin = reg16(e, REG_WININ), ls->winout = reg16(e, REG_WINOUT);
+        if (sLayers->sprite) {
+            ls->winh[0] = reg16(e, REG_WIN0H), ls->winh[1] = reg16(e, REG_WIN1H);
+            ls->winV = (u8)((e->winActive[0] & 1) | (e->winActive[1] & 1) << 1);
+        }
         ls->gpuBg = 0;
         for (int n = 0; n < 4; n++) {
             u16 cnt = reg16(e, REG_BGCNT + 2 * (u32)n);
@@ -812,8 +824,7 @@ void gpu2d_draw_layers(int record) {
             d->oam = (const u8 *)(work + 0x200) + 0x400 * n;
             if (line == 0 && sLayers->sprite)
                 sLayers->nsprites[n] = gpu2d_obj_sprites(d, sLayers->sprites[n], sLayers->sprite, &ax, &ay, &rowH);
-            // (sprites: the lines' OBJs only for the OBJ window, which shapes the windows' regions)
-            if (sLayers->sprite && !(reg32(d, REG_DISPCNT) & 0x8000)) {}
+            if (sLayers->sprite) {}  // (the sprites instead)
             else if (line == 0 && r->haveObj0[n]) d->obj = r->obj0[n];
             else if (line == 0) memset(&d->obj, 0, sizeof d->obj);
             else gpu2d_render_obj_line(d, line, &d->obj);

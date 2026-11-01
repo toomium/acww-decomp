@@ -576,7 +576,7 @@ static void sprite_quads(const Group *g) {
     const Gpu2dSprite *sp = sLayers.sprites[g->engine];
     for (int k = sLayers.nsprites[g->engine] - 1; k >= 0; k--) {
         const Gpu2dSprite *s = &sp[k];
-        if (s->prio != sObjPrio) continue;
+        if (s->prio != sObjPrio || s->window) continue;
         for (int i = 0; i < g->n; i++) {
             int y0 = s->y > g->y0[i] ? s->y : g->y0[i], y1 = s->y + s->h < g->y1[i] ? s->y + s->h : g->y1[i];
             if (y1 > y0)
@@ -601,7 +601,7 @@ static void layer_pass(const Group *g, int l, int is3d, const BgTex *b) {
 }
 static int obj_lines(const Group *g, int prio) {
     for (int k = 0; sLayers.sprite && k < sLayers.nsprites[g->engine]; k++)
-        if (sLayers.sprites[g->engine][k].prio == prio) return 1;
+        if (sLayers.sprites[g->engine][k].prio == prio && !sLayers.sprites[g->engine][k].window) return 1;
     for (int i = 0; i < g->n && !sLayers.sprite; i++)
         for (int y = g->y0[i]; y < g->y1[i]; y++)
             if (sLayers.objPrio[g->engine][y] >> prio & 1) return 1;
@@ -698,7 +698,49 @@ static void group(const Group *g) {
         rect(sX0, piece_y0(g, i), sX1, piece_y1(g, i), 0, 0, 0, TEX, col);
     }
     end();
-    if (windows && !sMargin) {
+    if (windows && !sMargin && sLayers.sprite) {
+        // the regions from the windows' shapes (with sprites): outside, then the OBJ window's OBJs, window 1, window 0
+        // over them, each writing its region (bits 3-4) and whether it allows the effects (bit 2)
+        colour_writes(0);
+        sTag = ST_REGION;
+        stencil(GPU_ALWAYS, shows[0] & 0x20 ? 0 : 4, 0, 0x1c);
+        begin();
+        for (int i = 0; i < g->n; i++) rect(0, (float)g->y0[i], W, (float)g->y1[i], 0, 0, 0, TEX, 0);
+        end();
+        if (dispcnt & 0x8000) {
+            source(&sSprites);
+            C3D_AlphaTest(true, GPU_GREATER, 0);
+            stencil(GPU_ALWAYS, 3 << 3 | (shows[3] & 0x20 ? 0 : 4), 0, 0x1c);
+            begin();
+            const Gpu2dSprite *sp = sLayers.sprites[g->engine];
+            for (int k = 0; k < sLayers.nsprites[g->engine]; k++) {
+                const Gpu2dSprite *t = &sp[k];
+                for (int i = 0; t->window && i < g->n; i++) {
+                    int y0 = t->y > g->y0[i] ? t->y : g->y0[i], y1 = t->y + t->h < g->y1[i] ? t->y + t->h : g->y1[i];
+                    if (y1 > y0)
+                        rect(t->x, (float)y0, (float)(t->x + t->w), (float)y1, (float)t->u / GPU2D_ATLAS_W,
+                             (float)(t->u + t->w) / GPU2D_ATLAS_W, (float)(t->v + y0 - t->y), GPU2D_ATLAS_H, 0);
+                }
+            }
+            end();
+            C3D_AlphaTest(false, GPU_ALWAYS, 0);
+            source(0);
+        }
+        for (int w = 1; w >= 0; w--) {  // (a window's X1 after its X2: it wraps round the line's end)
+            if (!(dispcnt & 0x2000u << w)) continue;
+            stencil(GPU_ALWAYS, (u32)(w + 1) << 3 | (shows[w + 1] & 0x20 ? 0 : 4), 0, 0x1c);
+            begin();
+            for (int i = 0; i < g->n; i++) {
+                const Gpu2dLineState *ps = piece_state(g, i);
+                float x1 = (float)(ps->winh[w] >> 8), x2 = (float)(ps->winh[w] & 0xff), y0 = (float)g->y0[i], y1 = (float)g->y1[i];
+                if (!(ps->winV >> w & 1)) continue;
+                if (x1 < x2) rect(x1, y0, x2, y1, 0, 0, 0, TEX, 0);
+                else if (x1 > x2) rect(0, y0, x2, y1, 0, 0, 0, TEX, 0), rect(x1, y0, W, y1, 0, 0, 0, TEX, 0);
+            }
+            end();
+        }
+        colour_writes(1);
+    } else if (windows && !sMargin) {
         colour_writes(0);
         sTag = ST_REGION;
         source(&sRegion[g->engine]);
@@ -929,7 +971,7 @@ static void frame_job(void *arg) {
             if ((used[e] & 0x100u << n) && (cpuBg[e] >> n & 1))
                 upload(sLayers.bg[e][n], &sBg[e][n], W * H * 2, GX_TRANSFER_FMT_RGB5A1);
         if ((used[e] & 0x1000) && !sLayers.sprite) upload(sLayers.obj[e], &sObj[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
-        if (used[e] & 0xe000) upload(sLayers.region[e], &sRegion[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
+        if ((used[e] & 0xe000) && !sLayers.sprite) upload(sLayers.region[e], &sRegion[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
     }
     if (sLayers.sprite && (sLayers.nsprites[0] || sLayers.nsprites[1])) {
         u32 bytes = GPU2D_ATLAS_W * GPU2D_ATLAS_H * 4, dim = GX_BUFFER_DIM(GPU2D_ATLAS_W, GPU2D_ATLAS_H);

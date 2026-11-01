@@ -134,7 +134,7 @@ int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int 
         const u8 *o = e->oam + i * 8;
         u16 a0 = (u16)(o[0] | o[1] << 8), a1 = (u16)(o[2] | o[3] << 8), a2 = (u16)(o[4] | o[5] << 8);
         int affine = a0 & 0x100, mode = a0 >> 10 & 3, shape = a0 >> 14;
-        if ((!affine && (a0 & 0x200)) || shape == 3 || mode == 2) continue;
+        if ((!affine && (a0 & 0x200)) || shape == 3) continue;
         if (mode == 3 && (!(a2 >> 12) || (dispcnt & 0x60) == 0x60)) continue;  // (as gpu2d_render_obj_line)
         s32 w = kObjW[shape][a1 >> 14], h = kObjH[shape][a1 >> 14], bw = w, bh = h;
         if (affine && (a0 & 0x200)) bw *= 2, bh *= 2;
@@ -146,7 +146,7 @@ int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int 
         if (*ay + bh > GPU2D_ATLAS_H) continue;  // shortcut: an atlas full of OBJs leaves the rest out; grow it if seen
         Gpu2dSprite *s = &out[n++];
         s->x = (int16_t)x0, s->y = (int16_t)y0, s->w = (uint16_t)bw, s->h = (uint16_t)bh;
-        s->u = (uint16_t)*ax, s->v = (uint16_t)*ay, s->prio = (uint8_t)(a2 >> 10 & 3);
+        s->u = (uint16_t)*ax, s->v = (uint16_t)*ay, s->prio = (uint8_t)(a2 >> 10 & 3), s->window = mode == 2;
         s32 pa = 0x100, pb = 0, pc = 0, pd = 0x100;
         if (affine) {
             const u8 *g = e->oam + (a1 >> 9 & 31) * 32;
