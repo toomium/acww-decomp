@@ -318,3 +318,5 @@ every frame, or pictures interpolated between the game's (needs R1).
   captured mix when the driver's alarm reaches it, which now waits until the game's thread next runs its events (up
   to about a frame, 16.7 ms; the capture buffer's half is about 16 ms), so the effect may lag and crackle where
   "Stereo" doesn't; (2) whether anything in the game waits on the sound in a way the real-time clock changes.
+- 2026-11-01: with the user's DSP firmware in Azahar's SD card (sdmc:/3ds/dspfirm.cdc): the sound's thread through
+  ndsp, paced, to frame 3000: the DSP's queue never ran dry, the first big load (frame 183) included.
