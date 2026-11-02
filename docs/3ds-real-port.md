@@ -377,3 +377,10 @@ every frame, or pictures interpolated between the game's (needs R1).
   docs/3ds.md 2026-10-29). Azahar, the same run in town (frames 4440-5040), `ACWW_WIDE=0` against on: 47-50
   against 43-48 game frames a second, core 2's compositing 3.7 against 5.3 ms a frame, VRAM free 477 against 1338 KB
   (the wide view keeps the layers' textures in linear memory); on hardware to be measured.
+- 2026-11-02: the user's run of 738ceaa5 (the wide view on, about 5870 frames): the title 63-66 game frames a second,
+  the town 55-59 (without the wide view about 60); the GPU's compositing 9.5-10.6 ms a composited frame where the
+  3D is drawn (5.9 elsewhere), core 2 now waits on the GPU (9.3 ms a frame) with 0.3 ms idle: the wide view's cost
+  is the GPU's. VRAM free 1338 KB. One frame of 6.0 s at frame 5738, all `game`, the watchdog saying virtual time
+  didn't move (frame 5737), then the home menu's at the end (5874): whether the user was in the home menu at 5738
+  too is to ask. "pxi7: receive FIFO overflow" once (the sound's thread runs on while the game's stands). Next
+  question (the user): the game made to think it has the larger screen, the touch elements at the edges (R5.3).
