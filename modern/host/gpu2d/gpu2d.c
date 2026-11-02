@@ -725,6 +725,9 @@ typedef struct {
     u32 bgMask[2], objMask[2];
     ObjLine obj0[2];
     int haveObj0[2], topEngine;
+#ifdef N3DS_DIRECT
+    Gpu2dMarginAffine margin[2];
+#endif
 } Record;
 static Record sRecord[2];
 static int sRecording;            // the record being made, or made last
@@ -733,8 +736,21 @@ int gpu2d_record(void) { return sRecording; }
 static u32 *record_line(int n, int line) { return sRecord[sRecording].lines[n][line]; }
 static u32 record_changes_so_far(void) { return sRecord[sRecording].changes; }
 
+#ifdef N3DS_DIRECT
+static Gpu2dMarginAffine sMargin[2];  // (given for the next frame: recorded at its start)
+void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_t y) {
+    int k = line < 0 ? line + GPU2D_MARGIN : line - SCREEN_H + GPU2D_MARGIN;
+    if (engine < 0 || engine > 1 || k < 0 || k >= 2 * GPU2D_MARGIN || (line >= 0 && line < SCREEN_H)) return;
+    Gpu2dMarginAffine *m = &sMargin[engine];
+    m->bg = bg, m->pa[k] = (int16_t)pa, m->x[k] = x, m->y[k] = y;
+}
+#endif
 static void record_start(const Gpu2dFrameInput *in) {
     Record *r = &sRecord[sRecording ^= 1];
+#ifdef N3DS_DIRECT
+    memcpy(r->margin, sMargin, sizeof r->margin);
+    sMargin[0].bg = sMargin[1].bg = 0;
+#endif
     memcpy(sShadow, in->palette, 0x800);
     memcpy(sShadow + 0x200, in->oam, 0x800);
     memcpy(r->start, sShadow, sizeof r->start);
@@ -824,6 +840,9 @@ void gpu2d_draw_layers(int record) {
         sLayers->palette[n] = (const u8 *)r->final + 0x400 * n;
     }
     sLayers->topEngine = r->topEngine;
+#ifdef N3DS_DIRECT
+    memcpy(sLayers->margin, r->margin, sizeof sLayers->margin);
+#endif
     int ax = 0, ay = 0, rowH = 0;  // (the sprite atlas, filled at line 0)
     for (int line = 0; line < SCREEN_H; line++) {
         for (; applied < r->lines[0][line][G2L_PALETTE]; applied++) work[r->change[applied].index] = r->change[applied].value;

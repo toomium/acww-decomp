@@ -60,6 +60,17 @@ typedef struct Gpu2dSprite {
     uint8_t prio;
     uint8_t window;  // 1: an OBJ-window OBJ (it shapes the OBJ window, isn't shown)
 } Gpu2dSprite;
+#ifdef N3DS_DIRECT
+// The enhanced port's wide view (docs/3ds-real-port.md R5.3): an affine BG whose parameters the game changes line by
+// line (the sky's clouds) on the lines beyond the DS's screen, as the game would set them there (gpu2d_margin_affine):
+// lines -GPU2D_MARGIN to -1, then 192 to 191 + GPU2D_MARGIN; PA and the reference point (PB, PC, PD as at the edge line)
+enum { GPU2D_MARGIN = 24 };
+typedef struct Gpu2dMarginAffine {
+    int bg;  // 2 or 3; 0: none
+    int16_t pa[2 * GPU2D_MARGIN];
+    int32_t x[2 * GPU2D_MARGIN], y[2 * GPU2D_MARGIN];
+} Gpu2dMarginAffine;
+#endif
 typedef struct Gpu2dLayers {
     uint16_t *bg[2][4];      // per engine BG0-3: RGBA5551 (r << 11 | g << 6 | b << 1 | 1), 0 transparent
     uint32_t *obj[2];        // OBJs: RGBA8 (r << 24 | g << 16 | b << 8 | (priority + 1) * 32), 0 transparent
@@ -77,6 +88,9 @@ typedef struct Gpu2dLayers {
     uint32_t *sprite;        // the OBJs as sprites (above; NULL: in `obj`)
     Gpu2dSprite sprites[2][128];  // per engine, in OAM order
     int nsprites[2];
+#ifdef N3DS_DIRECT
+    Gpu2dMarginAffine margin[2];  // per engine, for this frame
+#endif
 } Gpu2dLayers;
 
 typedef struct Gpu2dFrameInput {
@@ -116,6 +130,11 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in);
 // frame fields; not while the record after the next is made)
 int gpu2d_record(void);
 void gpu2d_draw_layers(int record);
+#ifdef N3DS_DIRECT
+// an affine BG's parameters on a line beyond the DS's screen (Gpu2dMarginAffine), given by the game before a frame (its
+// V-blank) for that frame
+void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_t y);
+#endif
 // screen 0 top, 1 bottom (POWCNT1 bit 15 decides which engine shows where): 256x192 pixels, 0xffRRGGBB
 const uint32_t *gpu2d_screen(int screen);
 
