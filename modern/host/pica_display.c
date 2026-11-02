@@ -272,6 +272,8 @@ typedef struct {
     C3D_Tex tex;               // what the GPU reads: in VRAM where it fits, else in linear memory
     C3D_Tex stage;             // (tex in VRAM: the copy the CPU decodes into, which the CPU can't write)
     int staged;
+    int uniform, opaque;       // a text BG whose map is one entry everywhere (the same wherever it is repeated); and
+                               // its tile without a transparent pixel
     u16 map[64 * 64];          // the map entries the texture shows (affine: 8-bit ones)
     u8 chars[0x10000];         // the tile data it was decoded from
     u8 pal[0x200];             // and the BG palette
@@ -409,6 +411,14 @@ static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
             }
             t->map[ty * tw + tx] = entry;
         }
+    t->uniform = kind == 1;
+    for (int i = 1; i < tw * th && t->uniform; i++) t->uniform = t->map[i] == t->map[0];
+    t->opaque = 0;
+    if (t->uniform && (t->map[0] & 0x3ffu) * tileBytes < sizeof t->chars) {
+        const u8 *c = t->chars + (t->map[0] & 0x3ffu) * tileBytes;
+        t->opaque = 1;
+        for (u32 k = 0; k < tileBytes && t->opaque; k++) t->opaque = color256 ? c[k] != 0 : (c[k] & 0xf) && (c[k] >> 4);
+    }
     if (drawn && t->staged) {  // (the GPU copies it to VRAM: C3D_SyncTextureCopy)
         C3D_TexFlush(&t->stage);
         C3D_TexLoadImage(&t->tex, t->stage.data, GPU_TEXFACE_2D, 0);
@@ -522,6 +532,16 @@ static int sAllSecond, sNoMark;
 static int affine_wraps(const Gpu2dLineState *s, int l) {
     return l >= 2 && l < 4 && (s->gpuBg >> l & 1) && s->bgKind[l] == 2 && (s->bgcnt[l] & 0x2000);
 }
+static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s);
+// a BG the margins draw: the affine ones that wrap; the text BGs (they repeat) with the windows on or of one tile
+// everywhere: what the screen transitions show (an iris: a BG of black outside its window, then over everything)
+static int margin_bg(int e, const Gpu2dLineState *s, int l, int is3d, int windows) {
+    if (affine_wraps(s, l)) return 1;
+    if (l >= 4 || (l == 0 && is3d) || !(s->gpuBg >> l & 1) || s->bgKind[l] != 1) return 0;
+    if (windows) return 1;
+    const BgTex *b = bg_texture(e, l, s);
+    return b && b->uniform;
+}
 
 // a layer's texture and its wrapping for the group (0: none)
 static BgTex *layer_bind(const Group *g, int l, int is3d) {
@@ -550,9 +570,11 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
         if (l == 4 || !(g->s->gpuBg >> l & 1)) rect(0, y0, W, y1, 0, (float)W / TEX, y0, TEX, 0);
         return;
     }
-    if (b->kind == 1) {  // text: scrolled
-        float u0 = (float)s->bghofs[l] / b->w, u1 = (float)(s->bghofs[l] + W) / b->w;
-        rect(0, y0, W, y1, u0, u1, (float)s->bgvofs[l] + y0, (float)b->h, 0);
+    if (b->kind == 1) {  // text: scrolled (the margins: on beyond the screen's edges, as it repeats)
+        float x0 = sMargin ? sX0 : 0, x1 = sMargin ? sX1 : W;
+        float u0 = (s->bghofs[l] + x0) / b->w, u1 = (s->bghofs[l] + x1) / b->w;
+        if (sMargin) y0 = piece_y0(g, i), y1 = piece_y1(g, i);
+        rect(x0, y0, x1, y1, u0, u1, (float)s->bgvofs[l] + y0, (float)b->h, 0);
         return;
     }
     // affine: at pixel (x, y) the texel ((X + PA x + PB (y - y0)) >> 8, (Y + PC x + PD (y - y0)) >> 8), X, Y the
@@ -756,14 +778,14 @@ static void group(const Group *g) {
     }
     int margin = 0, margins = 0;  // (the margins' layers drawn, of how many)
     for (int l = 0; sMargin && l < 4; l++)
-        margins += (dispcnt & 0x100u << l) && affine_wraps(s, l) && (!windows || shows[0] >> l & 1);
+        margins += (dispcnt & 0x100u << l) && margin_bg(g->engine, s, l, is3d, windows) && (!windows || shows[0] >> l & 1);
     for (int p = 3; p >= 0; p--) {
         for (int n = 0; n <= 4; n++) {  // (BG3 to BG0, then the OBJs of this priority in front of them)
             int l = n == 4 ? 4 : 3 - n;
             if (l < 4 && (!(dispcnt & 0x100u << l) || s->prio[l] != p)) continue;
             if (l == 4 && !(dispcnt & 0x1000)) continue;
             if (sMargin) {  // (under the first: the backdrop alone; after the last: only the master brightness)
-                if (!affine_wraps(s, l) || (windows && !(shows[0] >> l & 1))) continue;
+                if (l == 4 || !margin_bg(g->engine, s, l, is3d, windows) || (windows && !(shows[0] >> l & 1))) continue;
                 sAllSecond = margin == 0 && (bld >> 13 & 1) && !outside;
                 sNoMark = ++margin == margins && effect != 2 && effect != 3;
                 layer(g, l, p, is3d, 0, 0);
@@ -861,6 +883,19 @@ static void margins(float x0, float y0) {
         rect(x0 - k, y0 - l, x0 + W + k, y0 + H + l, 0, 0, 0, TEX, q);
         end();
     }
+}
+
+// whether the wide 3D picture goes in the margins: they show the 3D layer outside the windows, and no BG of one opaque
+// tile everywhere is in front of it (the screen transitions' black); else the 2D layers (margins2d)
+static int margins_3d(void) {
+    const Gpu2dLineState *m = &sLayers.line[0][H / 2];
+    if ((m->dispcnt & 0xe000) && !(m->winout & 1)) return 0;
+    for (int l = 1; l < 4; l++) {
+        if (!(m->dispcnt & 0x100u << l) || m->prio[l] >= m->prio[0] || !(m->gpuBg >> l & 1) || m->bgKind[l] != 1) continue;
+        const BgTex *b = bg_texture(0, l, m);
+        if (b && b->opaque) return 0;
+    }
+    return 1;
 }
 
 // an engine's picture, group by group of lines with the same GPU state, in pieces of lines with the same state
@@ -1045,7 +1080,7 @@ static void frame_job(void *arg) {
         C3D_RenderTargetClear(sScreen[s], C3D_CLEAR_ALL, 0x000000ff, 0);
         C3D_FrameDrawOn(sScreen[s]);
         projection(sw, 240.0f, 1);
-        if (s3dWide && e == 0 && (used[0] & 8)) margins(x0, y0);
+        if (s3dWide && e == 0 && (used[0] & 8) && margins_3d()) margins(x0, y0);
         else if (sScreenStencil) margins2d(e, x0, y0, sw);
         source(pic);
         opaque();
