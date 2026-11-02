@@ -29,6 +29,10 @@ typedef struct G3Vertex {
     s32 farPos[4], farColor[3];  // (an edge crossing both planes of an axis: the second crossing from there)
     u8 dbgClips;      // (diagnostics: the interpolations behind it; for the last one the inside and outside
     s32 dbgClip[8];   // colours, din, dout)
+#ifdef N3DS_DIRECT
+    s32 obj[3];       // the object coordinates and the list's id of their clip matrix (g3p_matrix): the picture can
+    u16 seg;          // be drawn again with other matrices (docs/3ds-real-port.md D, interpolation)
+#endif
 } G3Vertex;
 
 typedef struct G3Polygon {
@@ -97,6 +101,12 @@ void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out);  // (gpu3d_raster.c)
 void g3p_viewport(const u32 vp[6]);  // VIEWPORT: x1, y1 (from the top), x2, y2, width, height (gpu3d_geom.c's sViewport)
 void g3p_polygon(G3Vertex *const *v, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer);
 int g3p_swap(void);  // the list filled since the last swap handed over (its number, G3RenderState.list), a new one begun
+#ifdef N3DS_DIRECT
+int g3p_matrix(const s32 clip[16]);  // a clip matrix (20.12) the list being filled uses: its id (G3Vertex.seg)
+void g3p_vertex(int seg, const s32 obj[3]);  // a vertex submitted under it (culled or not): what identifies it
+// each frame, before g3_render's drawing: whether a picture between the game's is due (the same list again)
+int g3p_between(const G3RenderState *r);
+#endif
 
 // feature census (gpu3d_geom.c)
 void g3_feature(int id);

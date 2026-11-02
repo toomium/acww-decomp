@@ -309,11 +309,17 @@ static void mtx_trans(Mtx *cur, const s32 *p) {
     for (int j = 0; j < 4; j++)
         cur->m[12 + j] += (s32)(((s64)p[0] * cur->m[j] + (s64)p[1] * cur->m[4 + j] + (s64)p[2] * cur->m[8 + j]) >> 12);
 }
+#ifdef N3DS_DIRECT
+static int sSeg = -1;  // the id of sClip in the list being filled (g3p_matrix), -1 none yet
+#endif
 static void update_clip(void) {
     if (!sClipDirty) return;
     sClip = sProj;
     mtx_mult(&sClip, &sPos);  // clip = position * projection
     sClipDirty = 0;
+#ifdef N3DS_DIRECT
+    sSeg = -1;
+#endif
 }
 
 // the matrix (or matrices) a command of the current mode changes: mode 0 projection, 1 position, 2 position and
@@ -833,6 +839,11 @@ static void submit_vertex(void) {
     s64 x = sVtx[0], y = sVtx[1], z = sVtx[2];
     for (int i = 0; i < 4; i++)
         v->pos[i] = (s32)((x * sClip.m[i] + y * sClip.m[4 + i] + z * sClip.m[8 + i] + 0x1000 * (s64)sClip.m[12 + i]) >> 12);
+#ifdef N3DS_DIRECT
+    if (sSeg < 0) sSeg = g3p_matrix(sClip.m);
+    v->obj[0] = (s32)x, v->obj[1] = (s32)y, v->obj[2] = (s32)z, v->seg = (u16)sSeg;
+    g3p_vertex(sSeg, v->obj);
+#endif
     for (int i = 0; i < 3; i++) v->color[i] = sVtxColor[i] ? sVtxColor[i] << 4 | 0xf : 0;
     v->dbgLight = sCurLightRec;
     if ((sTexParam >> 30) == 3) {  // texture coordinates from the vertex
@@ -1159,6 +1170,7 @@ static void do_swap(void) {
     r->list = g3p_swap();
     r->npoly = 0;
     sNumPolys = 0;
+    sSeg = -1;  // (the new list has no matrices yet)
 #endif
     for (int i = 0; i < sNumPolys; i++) {
         G3Polygon *p = &sPolyRam[sBank][i];
