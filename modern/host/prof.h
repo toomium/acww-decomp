@@ -15,6 +15,8 @@ enum {
     PROF_ARM7,  // the ARM7's side: its services (pxi7.c: files, the save, the clock), the wireless (wm7.c)
     PROF_UPLOAD,  // waiting for the GPU's copies of the layers into textures (the 3DS: display transfers)
     PROF_VRAM,  // VRAM's banks and the CPU's windows kept in step (vram.c: a VRAMCNT change, the frame's flush)
+    PROF_TILES, PROF_HASH, PROF_FEND,  // (the 3DS's compositing: the BGs' tile textures, the top screen's hash, the
+                                       // citro3d frame's end)
     PROF_N
 };
 extern volatile int gHostProf;

@@ -131,7 +131,7 @@ static void prof_sampler(void *arg) {
 static const char *const kProfNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
                                                "sound", "frontend", "pacing", "GPU wait", "lighting",
                                                "vertices", "waiting for the GPU thread", "idle", "ROM",
-                                               "ARM7", "uploads", "VRAM"};
+                                               "ARM7", "uploads", "VRAM", "BG tiles", "top hash", "frame end"};
 // the slowest frame of the 120: the parts the sampler saw in it (milliseconds), the game's thread and the GPU thread
 static u32 sProfAt[2][PROF_N], sProfSlowest[2][PROF_N];
 static void prof_frame(int slowest) {
@@ -167,7 +167,9 @@ static void prof_report(double frameMs) {
         char line[512];
         int k = snprintf(line, sizeof line, "profile%s: %u samples, ms a frame:", t ? ", the GPU thread" : "", total);
         for (int i = 0; i < PROF_N; i++)
-            if (t == 0 ? i != PROF_IDLE : (i == PROF_2D || i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_UPLOAD || i == PROF_IDLE))
+            if (t == 0 ? i != PROF_IDLE && i < PROF_TILES
+                       : (i == PROF_2D || i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_UPLOAD || i == PROF_IDLE ||
+                          i == PROF_VERTEX || i == PROF_VRAM || i == PROF_LIGHT || i >= PROF_TILES))  // (the 3DS's jobs' parts)
                 k += snprintf(line + k, sizeof line - k, " %s %.1f", kNames[i], frameMs * n[i] / total);
         fprintf(stderr, "%s\n", line);
     }
