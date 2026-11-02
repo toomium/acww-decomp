@@ -18,7 +18,7 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 | Subsystem | Now | What is still rebuilt | Cost | Next |
 |---|---|---|---|---|
 | 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4, core 2 about 2 (textures, batches), GPU 1.3 | lighting and transform in the vertex shader (R1) |
-| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | Azahar: core 0 0.7, core 2 0.7 (start) / 5.6 (name entry) | - |
+| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA, in the wide view straight onto the screens | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | Azahar: core 0 0.7, core 2 0.7 (start) / 5.6 (name entry) | - |
 | Sound | LLE, on a thread of its own (option A): the driver, sequencer, mixer and capture clocked by the sound it mixes, feeding the DSP itself | the SPU (16 channels mixed on the CPU), one stream to ndsp | core 2 (New 3DS), not core 0 | the user's listening test; ndsp channels (option B) later for the Old 3DS |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
 | Files, ROM, save | HLE (SDK): the save memory's stream commands (`CARDi_RequestStreamCommand`) and the ROM reads (`CARDi_ReadRom`, all of FS's) done at once in the host; the ROM image read ahead in the background | the save file written to the SD card on the game's thread (one write, 30 frames after the last change); the identify and the other card requests through the PXI | loads in Azahar still about 1.3 s at the first big one: ROM about 0.5 s (the read-ahead only runs while the game waits), "registers" about 0.55 s (**unverified**: the VRAM banks' remapping) | the load's register time; the save file's write in the background |
@@ -384,3 +384,82 @@ every frame, or pictures interpolated between the game's (needs R1).
   didn't move (frame 5737), then the home menu's at the end (5874): whether the user was in the home menu at 5738
   too is to ask. "pxi7: receive FIFO overflow" once (the sound's thread runs on while the game's stands). Next
   question (the user): the game made to think it has the larger screen, the touch elements at the edges (R5.3).
+- 2026-11-02: R5.3, what the UI in town is (the PC build, the save script, `ACWW_VRAMDUMP` at frames 22390 and
+  26500): the bottom screen is engine A; its BG0 is the 3D, every other 2D layer there is UI. The clock: about 26
+  OBJs (palette 9, x 167-253, y 154-189) from `HudClock::draw` (src/main/unk_02089fbc.cpp) through `Oam_DrawCell`;
+  the green arrow at the top right: the HudController's camera button (OBJs); a text box: BG2 (map 6) shown only in
+  window 0 (lines 60-192), with OBJs (the arrow). The game hides unused OBJs at y 192 (72 in the text box's frame),
+  so OAM positions past 256x192 can't mean "in the margin": each element moved to the wide screen's edges needs an
+  anchor from the game (under N3DS_DIRECT), and the bottom screen then composed at its own size (the 3D under it
+  where the text box was). Not found: the code that sets the text box's BG2 and window 0 (`ACWW_IOHIST`'s callers
+  didn't resolve to the right functions).
+- 2026-11-02: why the 3D world shows 20 pictures a second (R0.0's open question), from the code: the whole main
+  loop (Main_Loop, src/main/unk_0206d5b8.cpp: the tasks, actors, drawing) runs once every `gVBlanksPerFrame`
+  V-blanks (Main_VBlankCallback, src/itcm/unk_01ffcc60.cpp), which BootLogoScene::onCreate and
+  FieldScene::stepFinish (src/main/unk_020b4828.cpp) set to 3. So the game logic itself runs at 20 Hz; 1 would run
+  the game three times as fast. More 3D pictures need interpolation between the game's frames (R6.3). Also seen in
+  pica_display.c: in the direct build the CPU's OBJ and window-region textures (`sObj`, `sRegion`, with their
+  linear staging buffers) are allocated but never drawn (the OBJs are sprites, the windows shapes), and the CPU's BG
+  textures (`sBg`) only for a BG the GPU doesn't draw: **unverified** whether that ever happens there.
+- 2026-11-02: measured (Azahar, the direct build of b4d5bd05, the continue script on wide.sav, unpaced,
+  `ACWW_PICA_HASH=1 ACWW_PICA_STATS=1`, to frame 5400): of every three composited pictures two differ and one
+  repeats the one before (runs of 1 and 2 alternating, from the title to the town; 67 % of the pictures new). So
+  composing only changed pictures would save a third of the compositing, not two thirds; why the third frame of a
+  game frame shows two different pictures (the 2D's change and the new 3D picture a frame apart?) is **unverified**.
+  In town a composited frame fills about 713,000 pixels: backdrop 194,000 (37 draws), the screens and their margins
+  290,000, BG layers 109,000, the 3D layer 105,000 (blended 85,000, as it is 10,000, marks 10,000), OBJs 6,000. No
+  pixel came from the CPU's BG or OBJ textures (`sBg`, `sObj` unused in this run); in the wide view they are in linear
+  memory, so dropping them frees linear memory, not VRAM. The sprite atlas in linear memory draws only the OBJs'
+  6,000 pixels: not where the wide view's GPU time goes. Core 2 (Azahar's numbers): compositing 10.6-10.7 ms a frame.
+- 2026-11-02: R5.3 B1, the wide view composed straight onto the screens (the user chose B, then C, D; A, skipping
+  unchanged pictures, left out: after D every picture changes). In the direct build with the wide view each engine is
+  now drawn onto its screen's target (pica_display.c `screen_compose`): no 256x192 picture of the engine first, no
+  copy of it, no margins drawn apart. Beyond the DS's picture go the backdrop, the wide 3D picture, the BGs the margins
+  drew before (`margin_bg`), the window outside region and the effects; the other BGs and the sprites are clipped to
+  the DS's 256x192. For the first layer over a backdrop that is a 2nd target and the last one before no brightness
+  effect, the passes that would draw nothing are left out (without windows; the margins did that before). Checks
+  (Azahar, the continue script on wide.sav, `ACWW_RTC` fixed - the time of day changes the 3D's light): every
+  composited picture's DS part the old path's (`ACWW_PICA_HASH`'s new "screens" hash over the screens' targets, read
+  back once the GPU is done: a read right after C3D_FrameEnd raced the GPU in town; the pictures in the same order,
+  the composited count one apart in one run); the whole screens at 12 frames (the title, the house's text boxes, the
+  iris, black, the town; `ACWW_PICA_SHOT`, new: both screens as drawn to `sdmc:/3ds/acww/screen<0|1>-<frame>.ppm`)
+  pixel for pixel the old path's. In town a composited frame fills 351,000 pixels (was 713,000: no "screens" copy,
+  backdrop 194,000 -> 173,000, BG layers 109,000 -> 70,000, the 3D layer 105,000 -> 102,000 in one pass); core 2's
+  compositing (Azahar, without the checks) 6.0 -> 4.0 ms a frame, 43.0 -> 44.3 game frames a second in town (Azahar
+  runs the cores one after another: the hardware decides). The plain 3DS build: its 1501 composited pictures to frame
+  3000 the build before's. `ACWW_PICA_SCREEN=0` brings the old path back, for comparing on hardware.
+- 2026-11-02: the user's run of B1 (New 3DS, town): the GPU's compositing 8.0-9.8 ms a composited frame (was
+  8.6-10.8): half the pixels, 7 % less time, so the fill rate isn't what costs. `ACWW_PICA_PROBE=1` (new, with
+  `ACWW_FPS`: every 300 composited frames the next part left out, the report saying which) in the user's next run,
+  town, three rounds alike: everything 9.4-9.7 ms; without the sprites' upload 6.6 (the atlas, 512 KB, copied in
+  full every frame, into linear memory in the wide view); without the backdrop 6.6 (2.8 ms for 173,000 pixels of
+  one colour); without the BGs and OBJs 7.2; without the blended passes (the 3D layer) 8.2; without any draw 3.8;
+  without draws, clears and upload 1.3. The backdrop's cost: the sky's colour changes every line (its H-blank), so
+  every layer of the top screen was drawn as one-line quads (`ACWW_PICA_STATS` now counts quads: backdrop 182, BG
+  layers 141 a frame); a thin quad reads and writes each 8x8 tile of the target once per line. Changed (direct
+  build): the backdrop from a texture of a colour per line (`sBackdrop`), one quad per group, and the backdrop no
+  longer cuts the runs of lines (backdrop quads 182 -> 19); the sprites' upload only the atlas's rows in use. Azahar:
+  every picture and the 6 screenshots the build before's. The user's run: the compositing 9.4-9.7 -> 5.1 ms (the
+  upload 0.2, the backdrop 0.6, the BGs and OBJs 1.1-1.8, the 3D layer 0.5, no draws 1.9, nothing 1.4). What still
+  cuts the top screen into lines: the sky's BG3 changes its PA every line (128 at the top to 253 at the bottom, 1/PA
+  linear in the line: a perspective; its reference point with it) and BLDALPHA changes on 34 lines.
+- 2026-11-02: the clouds beyond the DS's picture (the user: above the DS's old edge they weren't in perspective any
+  more): the margins above and below took the first and last line's parameters. Now (screen_compose) an affine BG
+  whose PA-PD change over the 32 lines at an edge goes on line by line into the margins, its parameters and reference
+  point from a quadratic fitted to those lines (`edge_fit`). The DS's part unchanged (Azahar: the pictures the build
+  before's); the title's sky shows larger clouds above the old edge, as the perspective goes on. 48 one-line quads
+  more a pass for that BG. The plain 3DS build: its 1501 pictures to frame 3000 still HEAD's.
+- 2026-11-02: the user's run of the fitted margins: compositing 5.6 ms (5.1 before: the 48 one-line quads about 0.5
+  ms); the clouds above the old edge didn't look right (the user). Replaced by the game's own formulas: the sky's line
+  tables come from Sky_UpdateLineTables (src/main/unk_020b8d9c.cpp): table line j has PA = 0x10000 / (0x200 -
+  256 j / 192), X = the scroll X - (PA - 0x100) * 0x80, Y = the scroll Y + (u * u >> 8) * 0xc0 with u = (256 j +
+  0x3000) / 0xc0; the screen's line L shows table line L - 1 + screenOffsetY (Sky_HBlankMain / Sub: the H-blank after
+  line L-1 writes it; line 0 table line 0, from the V-blank). Now (N3DS_DIRECT) Sky_VBlankMain / Sub give the 24 lines
+  above (table lines L + offset) and below (L - 1 + offset, not clamped at 191 as the DS's lines are) to the runtime
+  (`gpu2d_margin_affine`, recorded at the frame's start: Gpu2dLayers.margin), and screen_compose draws the cloud BG's
+  margin lines with them (the fit is gone). The other per-line state there stays the edge line's: the blend (the
+  game's lineBlend is the same above table line 0x77; from 0xa8 on it is 0x1000, the clouds not shown, so below the
+  DS's last line too), the backdrop's gradient (constant beyond its key lines), the layers below the horizon. The DS's
+  part unchanged (Azahar: the pictures the build before's); the clouds go on across the old top edge.
+- 2026-11-02: the user: the clouds look right now. (What looked like clouds only at the bottom was a probe round of
+  `ACWW_PICA_PROBE`, which leaves parts out on purpose.)
