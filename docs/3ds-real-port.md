@@ -17,14 +17,55 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 
 | Subsystem | Now | What is still rebuilt | Cost | Next |
 |---|---|---|---|---|
-| 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4, core 2 about 2 (textures, batches), GPU 1.3 | lighting and transform in the vertex shader (R1) |
-| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA, in the wide view straight onto the screens | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | Azahar: core 0 0.7, core 2 0.7 (start) / 5.6 (name entry) | - |
+| 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4.5 (geometry 1.8, lighting 0.9, vertices 1.0), core 2 about 1.5-1.9, GPU 1.6-1.9 (the wide picture) | interpolation (R6.3, D below); the transform stays the CPU's (C1, the GPU's, not taken: the log 2026-11-02) |
+| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA, in the wide view straight onto the screens | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | core 0 1.3, core 2 1.1-1.5; the GPU's compositing 5.5 in town | the UI at the wide screen's edges (R5.3 B2 below) |
 | Sound | LLE, on a thread of its own (option A): the driver, sequencer, mixer and capture clocked by the sound it mixes, feeding the DSP itself | the SPU (16 channels mixed on the CPU), one stream to ndsp | core 2 (New 3DS), not core 0 | the user's listening test; ndsp channels (option B) later for the Old 3DS |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
 | Files, ROM, save | HLE (SDK): the save memory's stream commands (`CARDi_RequestStreamCommand`) and the ROM reads (`CARDi_ReadRom`, all of FS's) done at once in the host; the ROM image read ahead in the background | the save file written to the SD card on the game's thread (one write, 30 frames after the last change); the identify and the other card requests through the PXI | loads in Azahar still about 1.3 s at the first big one: ROM about 0.5 s (the read-ahead only runs while the game waits), "registers" about 0.55 s (**unverified**: the VRAM banks' remapping) | the load's register time; the save file's write in the background |
 | VRAM | HLE (SDK) for the texture uploads (`GX_LoadTex`, `GX_LoadTexPltt` straight into the banks, no remapping); otherwise LLE | the banks and the CPU's windows (vram.c): remapped at a VRAMCNT change, the mapped granules flushed each frame | Azahar: 0.1 a frame, 0 at the first big load (was 410 ms) | - |
 | Input, clock, NVRAM | LLE (cheap) | the PXI round trip | negligible | R3 |
 | Threads, the game's frame | kept (game logic) | - | - | - |
+
+## Next steps (2026-11-02; details in the log, section 5)
+
+Where it stands (a New 3DS, the wide view, town): 59.8 game frames a second throughout; the GPU's compositing 5.5
+ms a composited frame (was 9.5-10.8 before R5.3 B1); no 45 ms frames any more (f5d11fc3). What is left a frame: the
+GPU about 9 ms, core 0 about 6-7 ms (pacing), core 2 about 6.7 ms (idle). The slowest frame of each 120 (37-39 ms)
+is the game's own work every third frame (game, registers, geometry, lighting, vertices: 20-25 ms).
+
+Open, in the order proposed to the user (the user picks):
+1. **D: R6.3, 60 3D pictures a second by interpolation, on the CPU.** The game's whole loop runs at 20 Hz
+   (`gVBlanksPerFrame = 3`: BootLogoScene::onCreate, FieldScene::stepFinish), so more 3D pictures only come from
+   pictures between two game frames. The transform on the CPU (exact, about 3 ms a 3D picture on hardware) is
+   cheap enough for the in-between pictures; C1 (the GPU's transform, branch `c1-gpu-transform`) saved nothing and
+   flickered on hardware. Steps:
+   - D1: record each 3D picture's polygons in object coordinates with their clip matrix's id and the matrices in the
+     order made (C1's recording, without its shader); drawn through the CPU's transform as now.
+   - D2: the camera only, as a test of the feel: the last game frame's scene again with a camera between two game
+     frames. Costs: up to a game frame (33-50 ms) more input latency; core 0 about +2 ms a frame; the GPU's 3D three
+     times as often (about 11 of 16.7 ms then).
+   - D3: objects and characters too: the matrices of two game frames paired (the risk: whether that pairing holds;
+     the clip matrix changes 150-470 times a picture, about half of them inside polygons: skinning).
+   - D4: no interpolation across scene changes, warps, camera cuts.
+2. **B2: R5.3, the UI at the wide screens' edges** (the user's first wish): the clock bottom right, the camera
+   button top right, the text box flush with the bottom. Done in screen_compose (pica_display.c) with anchors the
+   game gives under N3DS_DIRECT: `HudClock::draw` (src/main/unk_02089fbc.cpp) through `Oam_DrawCell`
+   (src/main/unk_02087e70.cpp; tag the OAM entries it allocates, latched with OAM in the 2D record), the
+   HudController's camera button (OBJs), the talk window's BG2 with its window 0 and its OBJs (TalkTextBox /
+   TalkWindowState, include/talk/; the code that sets BG2 and window 0 not found yet), ChoiceWindow with the text
+   box. Then the touch mapped back for what moved (frontend_3ds.c:163 maps the middle 256x192 only). Costs nothing
+   on the GPU.
+3. Smaller, optional: texture VRAM's tracking from the written ranges (GX_LoadTex) instead of copying and comparing
+   all 640 KB (g3_tex_setup on core 0, `track` on core 2) whenever a texture is uploaded; the sky's cloud BG as
+   one-line quads (about 1.5-2 ms of the GPU): try the same quads ordered in 8-line blocks (the target's tile cache).
+
+Still open questions: why C1's clip coordinates in the DS's own units (w about 10^5) made objects vanish on the GPU,
+and why C1 flickers on hardware (24-bit shader floats suspected, **unverified**).
+
+Checking (Azahar, hidden and silent, docs/3ds.md T0 and the memory notes): the continue script on `wide.sav` with
+`ACWW_RTC` fixed (the time of day changes the 3D's light), `ACWW_PICA_SHOT` for whole screens, `ACWW_PICA_HASH`
+("screens"), `ACWW_PICA_STATS` (pixels, draws, quads per pass); on hardware `ACWW_FPS=1`, `ACWW_PICA_PROBE=1` for the
+GPU's time per part. `ACWW_RAMHASH` can't compare two direct-build runs: the sound's thread runs in real time.
 
 ## 0. Rules for this branch
 
@@ -132,8 +173,9 @@ Decide after R1-R3 with the profile.
 ### R5: wide screen and stereoscopic 3D
 
 **R5.1** The wide view (`ACWW_WIDE`) with the game's culling widened (the game culls to the DS's view), behind an
-option. **R5.2** Stereoscopic 3D from R1's float depth (per-eye projection as a uniform), the 2D layers at screen
-depth. **R5.3** The UI laid out for the wide screens (R4).
+option (done). **R5.2** Stereoscopic 3D from R1's float depth (per-eye projection as a uniform), the 2D layers at screen
+depth: the 3DS shows it on the top screen only, the 3D world is on the bottom one. **R5.3** The UI laid out for the
+wide screens (R4): B1, the screens composed straight onto their targets, done; B2, the anchors: Next steps.
 
 ### R6: features
 
@@ -143,8 +185,8 @@ on X, pulling weeds and shaking trees on Y. **R6.2** Languages: no ROM at build 
 instead: `/script/ENG/...` as `/script/GER/...`, `/item_info/always.bin` as `/item_info/GER/always.bin`, and so on
 (the log, 2026-11-01, has the layouts). Then the game code where the EUR data differs: the furniture names' record
 size, the fonts, the 2D pictures with text, the text boxes' widths. Done when a German game can be started, played and
-saved, and every difference found is written here. **R6.3** More 3D pictures a second: the game draws
-every frame, or pictures interpolated between the game's (needs R1).
+saved, and every difference found is written here. **R6.3** More 3D pictures a second: pictures interpolated
+between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
 
 ## 4. Open questions (unverified)
 
