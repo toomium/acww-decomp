@@ -685,11 +685,11 @@ static void render(const G3RenderState *r, void *vertices, u32 *color, u32 *dept
 #ifdef N3DS_DIRECT
     List *l = &sList[r->list];
 #endif
-    {
+    if (direct) pdisp_frame_open(PDISP_3D);  // (the compositing goes on in its frame: pica_display.c)
+    else {
         HOST_PROF_ON(gPicaProf, PROF_GPU);
         C3D_FrameBegin(0);  // (not paced to the display: hw.c paces the frames; waits for the GPU's work before)
     }
-    if (direct) pdisp_frame_begun(PDISP_3D);
     // (the colour premultiplied as the polygons')
     C3D_RenderTargetClear(target, C3D_CLEAR_ALL,
                           (cr * 255 / 63 * a8 / 255) << 24 | (cg * 255 / 63 * a8 / 255) << 16 |
@@ -797,8 +797,8 @@ static void render(const G3RenderState *r, void *vertices, u32 *color, u32 *dept
     if (nv > first) C3D_DrawArrays(GPU_TRIANGLES, first, nv - first);
     GSPGPU_FlushDataCache(sVerts, (u32)nv * sizeof(PVertex));
 #endif
-    if (direct) {  // (the GPU draws while the CPU goes on: the compositing waits for it)
-        C3D_FrameEnd(0);
+    if (direct) {  // (the GPU draws while the CPU goes on, the compositing in the same frame)
+        pdisp_frame_run();
         return;
     }
     // the pictures back to linear memory (the transfers wait for the drawing before them, and for themselves)

@@ -31,7 +31,8 @@ struct Gpu2dLayers *pdisp_layers(void) { return 0; }
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) { (void)texture3d, (void)picture3d; }
 const uint32_t *pdisp_screen(int screen) { (void)screen; return 0; }
 void pdisp_submit(int kind, void (*job)(void *), void *arg) { (void)kind, job(arg); }
-void pdisp_frame_begun(int kind) { (void)kind; }
+void pdisp_frame_open(int kind) { (void)kind; }
+void pdisp_frame_run(void) {}
 void pdisp_wait(int kind, int older) { (void)kind, (void)older; }
 void pdisp_idle(void) {}
 void pdisp_gsp_init(void) {}
@@ -50,6 +51,7 @@ void pdisp_quit(void) {}
 #include "gpu3d/gpu3d.h"
 
 unsigned long long host_frame(void);  // (host.h, whose u32 isn't libctru's)
+void host_plat_log_write(void);       // (plat.h: the direct build's log written out now)
 
 extern const u8 pica_display_shbin[];  // (the vertex shader, pica_display.v.pica: picasso and bin2s)
 extern const u32 pica_display_shbin_size;
@@ -160,7 +162,12 @@ static void wait_done(int last, int kind, int older) {
     LightLock_Unlock(&sLock);
 }
 void pdisp_wait(int kind, int older) { wait_done(0, kind, older); }
-void pdisp_idle(void) { wait_done(1, 0, 0); }
+static void frame_close(void);
+// (citro3d is the game's thread's after this: a frame a 3D job left open ended)
+void pdisp_idle(void) {
+    wait_done(1, 0, 0);
+    frame_close();
+}
 void pdisp_submit(int kind, void (*job)(void *), void *arg) {
     start_worker();
     if (!sWorker) { job(arg); return; }
@@ -185,23 +192,149 @@ static int probe_skips(int what) {
     return sProbe > 0 && (kSkips[sProbeMode] & what);
 }
 
-// ACWW_FPS: the GPU's drawing time (citro3d's, from a frame's commands to their end) of the 3D pictures and of the
-// compositing, every 300 frames composited; C3D_GetDrawingTime is the frame's before C3D_FrameBegin's
-void pdisp_frame_begun(int kind) {
-    static int on = -1, last = -1;
-    static float ms[2];
+// ACWW_FPS: the GPU's drawing time (citro3d's, from a frame's end to its work's end) of the 3D pictures, of the
+// compositing and of frames with both (pdisp_frame_run: then from the 3D's commands' start, but C3D_GetDrawingTime
+// counts from the frame's end: the time the GPU drew while the compositing was made is left out), every 300 frames
+// composited; C3D_GetDrawingTime is the frame's before C3D_FrameBegin's
+static int sFrameKinds;  // (the kinds of job in the citro3d frame begun last: bit 0 the 3D, bit 1 the compositing)
+static void frame_time(int begun) {
+    static int on = -1;
+    static float ms[3];
     static u32 composited;
     if (on < 0) on = getenv("ACWW_FPS") != 0;
     if (!on) return;
-    if (last >= 0) ms[last] += C3D_GetDrawingTime();
-    last = kind;
-    if (kind == PDISP_COMP && ++composited % 300 == 0) {
-        fprintf(stderr, "pica: the GPU's drawing, ms a composited frame: 3D %.1f, compositing %.1f", ms[0] / 300,
-                ms[1] / 300);
+    if (begun) {  // (the frame before's time)
+        if (sFrameKinds) ms[sFrameKinds - 1] += C3D_GetDrawingTime();
+        return;
+    }
+    if (++composited % 300 == 0) {
+        fprintf(stderr, "pica: the GPU's drawing, ms a composited frame: 3D %.1f, compositing %.1f, both %.1f",
+                ms[0] / 300, ms[1] / 300, ms[2] / 300);
         if (sProbe > 0) fprintf(stderr, " (probe %d)", sProbeMode);
         fprintf(stderr, "\n");
-        ms[0] = ms[1] = 0;
+        ms[0] = ms[1] = ms[2] = 0;
     }
+}
+
+// The citro3d frames. C3D_FrameBegin waits until the GPU has done all the work before (libcitro3d.a disassembled,
+// 2026-11-02: gxCmdQueueWait(-1), then the queue stopped), and the GPU starts on a frame's commands only at its
+// C3D_FrameEnd (gxCmdQueueRun): C3D_FrameSplit only queues them. So with a frame for the 3D picture and one for the
+// compositing, the GPU thread and the GPU took turns: the compositing waited for the 3D's GPU work, the next 3D
+// picture for the compositing's. The direct build: one frame for both. The 3D job begins it and has the GPU start on
+// its commands at once (pdisp_frame_run), the compositing is made in the same frame meanwhile and ends it.
+// ACWW_PICA_MERGE=0: a frame each, as before.
+// citro3d's GX queue, the first member of its context (libcitro3d.a: C3D_FrameBegin / C3D_FrameEnd pass
+// __C3D_Context + 0 to gxCmdQueueWait / gxCmdQueueRun)
+extern u8 __C3D_Context[];
+static int sOpen, sRunning;  // a frame begun by a job and not ended; the GPU started on it
+static int sMerged;  // (frames so far with the 3D and the compositing in one: the stall's report)
+static void frame_begin(void) {
+    {
+        HOST_PROF_ON(gPicaProf, PROF_GPU);
+#ifdef N3DS_DIRECT
+        // the GPU's work not done after a second (a stall: one frame for the 3D and the compositing stopped the
+        // game on hardware, 2026-11-02): the GX queue's state to the log, written out at once (the log's thread
+        // starts only at frame 600)
+        gxCmdQueue_s *q = (gxCmdQueue_s *)__C3D_Context;
+        if (!gxCmdQueueWait(q, SYSCLOCK_ARM11)) {  // (in system ticks, libctru.a disassembled: not ns as gx.h says)
+            fprintf(stderr, "pica: the GPU's work not done after 1 s (frame %llu, one frame: %d): %u entries, %u "
+                    "submitted, %u done; types:", host_frame(), sMerged, q->numEntries, q->curEntry, q->lastEntry);
+            for (u32 i = 0; i < q->numEntries; i++) fprintf(stderr, " %u", (unsigned)q->entries[i].type);
+            fprintf(stderr, "\n");
+            host_plat_log_write();
+        }
+#endif
+        C3D_FrameBegin(0);  // (waits for the GPU's work before)
+    }
+    frame_time(1);
+    sOpen = 1, sRunning = 0, sFrameKinds = 0;
+}
+void pdisp_frame_open(int kind) {
+    if (sOpen && kind == PDISP_3D) frame_close();  // (a 3D job after a 3D job: what it changes the GPU may still read)
+    if (!sOpen) frame_begin();
+    sFrameKinds |= 1 << kind;
+    if (kind == PDISP_COMP) frame_time(0);
+}
+void pdisp_frame_run(void) {
+    static int merge = -1;
+    if (merge < 0) {
+        const gxCmdQueue_s *q = (const gxCmdQueue_s *)__C3D_Context;  // (as citro3d's: entries, room for some)
+        merge = (!getenv("ACWW_PICA_MERGE") || atoi(getenv("ACWW_PICA_MERGE"))) && q->entries && q->maxEntries >= 4;
+#ifndef N3DS_DIRECT
+        merge = 0;  // (the 3DS build as it was)
+#endif
+#ifdef N3DS_DIRECT
+        fprintf(stderr, "pica: the 3D picture and the compositing %s\n", merge ? "in one frame" : "in a frame each");
+#endif
+    }
+    if (!merge) {
+        C3D_FrameEnd(0);
+        sOpen = 0;
+        return;
+    }
+    // the 3D's commands queued (the queue stopped since C3D_FrameBegin), flushed from the data cache here, as
+    // C3D_FrameEnd(0) does before it runs the queue, then run. (GX_CMDLIST_FLUSH, the flush left to GSP, wasn't
+    // enough: on hardware the GPU stopped on such a list after a few frames, the queue's report: its two memory
+    // fills done, the command list submitted and never done.) GPUCMD_Split ends the list and moves gpuCmdBuf past
+    // it (libctru.a disassembled). From now on what is queued starts at once: only transfers and fills, whose
+    // sources are flushed where they are written; commands go in only after the queue is stopped again
+    // (frame_flush_commands, frame_close)
+    u32 *start = gpuCmdBuf;
+    C3D_FrameSplit(0);
+    GSPGPU_FlushDataCache(start, (u32)(gpuCmdBuf - start) * 4);
+    gxCmdQueueRun((gxCmdQueue_s *)__C3D_Context);
+    sRunning = 1;
+    sMerged++;
+}
+// a running frame's queue stopped once the GPU has done what it holds (the 3D, the transfers so far): what is queued
+// next waits for C3D_FrameEnd(0), which flushes the data cache before it runs the queue
+static void frame_stop(void) {
+    if (!sRunning) return;
+    gxCmdQueue_s *q = (gxCmdQueue_s *)__C3D_Context;
+    {
+        HOST_PROF_ON(gPicaProf, PROF_GPU);
+        gxCmdQueueWait(q, -1);
+    }
+    gxCmdQueueStop(q);  // (not running: the queue let go at once)
+    sRunning = 0;
+}
+static void frame_close(void) {
+    if (!sOpen) return;
+    frame_stop();
+    {
+        HOST_PROF_ON(gPicaProf, PROF_FEND);
+        C3D_FrameEnd(0);
+    }
+    sOpen = 0;
+    // ACWW_PICA_STATS: the most GX queue entries a frame took, every 300 frames ended (the queue is cleared only at
+    // C3D_FrameBegin, and full it breaks; one frame for the 3D and the compositing puts both's entries in it; they
+    // stay counted until the next frame begins)
+    static int stats = -1;
+    static u32 frames, most;
+    if (stats < 0) stats = getenv("ACWW_PICA_STATS") && atoi(getenv("ACWW_PICA_STATS"));
+    if (stats) {
+        const gxCmdQueue_s *q = (const gxCmdQueue_s *)__C3D_Context;
+        if (q->numEntries > most) most = q->numEntries;
+        if (++frames % 300 == 0) {
+            fprintf(stderr, "pica: the GX queue: at most %lu of %u entries a frame\n", (unsigned long)most,
+                    (unsigned)q->maxEntries);
+            most = 0;
+        }
+    }
+}
+// (before a C3D_SyncDisplayTransfer in a running frame: it would queue the commands before it unflushed, to start at
+// once: with any, the queue stopped first). The GX queue nearly full (the most seen in a frame: 14 of 32,
+// ACWW_PICA_STATS): the frame ended, the compositing goes on in one of its own, as with ACWW_PICA_MERGE=0
+static void frame_flush_commands(void) {
+    if (!sRunning) return;
+    const gxCmdQueue_s *q = (const gxCmdQueue_s *)__C3D_Context;
+    if (q->numEntries + 12u > q->maxEntries) {  // (12: what may follow the last upload, with room to spare)
+        frame_close();
+        frame_begin();
+        sFrameKinds = 1 << PDISP_COMP;
+        return;
+    }
+    if (gpuCmdBufOffset) frame_stop();
 }
 
 // (vram: in VRAM when it fits, the layers: the GPU reads its own memory much faster than the main memory, and the
@@ -384,6 +517,7 @@ static void read_map(u16 *out, const u8 *const *gran, u32 mask, u32 mb, int tw, 
 
 // BG n of an engine as its texture, brought up to date with VRAM: 0 if it can't be
 static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
+    HOST_PROF_ON(gPicaProf, PROF_TILES);
     BgTex *t = &sBgTex[e][n];
     if (t->kind && t->frame == sFrame) return t;  // (once a frame: VRAM as at its end)
     t->frame = sFrame;
@@ -448,6 +582,7 @@ static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
     }
     if (drawn && t->staged) {  // (the GPU copies it to VRAM: C3D_SyncTextureCopy)
         C3D_TexFlush(&t->stage);
+        if (sRunning && gpuCmdBufOffset) frame_stop();  // (it queues the commands before it unflushed: frame_stop)
         C3D_TexLoadImage(&t->tex, t->stage.data, GPU_TEXFACE_2D, 0);
     } else if (drawn) C3D_TexFlush(&t->tex);
     return t;
@@ -921,6 +1056,7 @@ static void group(const Group *g) {
 
 static void upload(void *src, C3D_Tex *t, u32 bytes, GX_TRANSFER_FORMAT fmt) {
     GSPGPU_FlushDataCache(src, bytes);
+    frame_flush_commands();
     HOST_PROF_ON(gPicaProf, PROF_UPLOAD);
     C3D_SyncDisplayTransfer(src, GX_BUFFER_DIM(W, H), t->data, GX_BUFFER_DIM(W, H),
                             kLinearToTiled | GX_TRANSFER_IN_FORMAT(fmt) | GX_TRANSFER_OUT_FORMAT(fmt));
@@ -1168,11 +1304,7 @@ static void frame_job(void *arg) {
     for (int e = 0; e < 2; e++)
         for (int y = 0; y < H; y++)
             if (!sLayers.line[e][y].white) used[e] |= sLayers.line[e][y].dispcnt, cpuBg[e] |= ~sLayers.line[e][y].gpuBg & 15u;
-    {
-        HOST_PROF_ON(gPicaProf, PROF_GPU);
-        C3D_FrameBegin(0);  // (waits for the GPU's work before)
-    }
-    pdisp_frame_begun(PDISP_COMP);
+    pdisp_frame_open(PDISP_COMP);  // (begun by this frame's 3D job, or here: waits for the GPU's work before)
 #ifdef N3DS_DIRECT
     for (int e = 0; e < 2; e++) {
         u32 *t = sBackdrop[e].data;
@@ -1202,6 +1334,7 @@ static void frame_job(void *arg) {
         rows = (rows + 7) & ~7;
         u32 bytes = GPU2D_ATLAS_W * (u32)rows * 4, dim = GX_BUFFER_DIM(GPU2D_ATLAS_W, rows);
         GSPGPU_FlushDataCache(sLayers.sprite, bytes);
+        frame_flush_commands();
         HOST_PROF_ON(gPicaProf, PROF_UPLOAD);
         C3D_SyncDisplayTransfer(sLayers.sprite, dim, sSprites.data, dim,
                                 kLinearToTiled | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
@@ -1300,7 +1433,7 @@ static void frame_job(void *arg) {
         if (s == 0) show_fps(a->gameFrame);
     }
     GSPGPU_FlushDataCache(sV, (u32)sNV * sizeof(DVertex));
-    C3D_FrameEnd(0);
+    frame_close();
     if (sStats) stats_report();
     if (sHash < 0) sHash = getenv("ACWW_PICA_HASH") && atoi(getenv("ACWW_PICA_HASH"));
     if (sHash) {  // (both engines' pictures read back: FNV-1a)
