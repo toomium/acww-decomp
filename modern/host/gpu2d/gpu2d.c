@@ -727,6 +727,7 @@ typedef struct {
     int haveObj0[2], topEngine;
 #ifdef N3DS_DIRECT
     Gpu2dMarginAffine margin[2];
+    int iris;
 #endif
 } Record;
 static Record sRecord[2];
@@ -744,12 +745,15 @@ void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_
     Gpu2dMarginAffine *m = &sMargin[engine];
     m->bg = bg, m->pa[k] = (int16_t)pa, m->x[k] = x, m->y[k] = y;
 }
+static int sIris = -1;  // (kept until changed)
+void gpu2d_iris(int progress) { sIris = progress; }
 #endif
 static void record_start(const Gpu2dFrameInput *in) {
     Record *r = &sRecord[sRecording ^= 1];
 #ifdef N3DS_DIRECT
     memcpy(r->margin, sMargin, sizeof r->margin);
     sMargin[0].bg = sMargin[1].bg = 0;
+    r->iris = sIris;
 #endif
     memcpy(sShadow, in->palette, 0x800);
     memcpy(sShadow + 0x200, in->oam, 0x800);
@@ -842,6 +846,7 @@ void gpu2d_draw_layers(int record) {
     sLayers->topEngine = r->topEngine;
 #ifdef N3DS_DIRECT
     memcpy(sLayers->margin, r->margin, sizeof sLayers->margin);
+    sLayers->iris = r->iris;
 #endif
     int ax = 0, ay = 0, rowH = 0;  // (the sprite atlas, filled at line 0)
     for (int line = 0; line < SCREEN_H; line++) {

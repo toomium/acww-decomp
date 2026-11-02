@@ -40,6 +40,7 @@ void pdisp_quit(void) {}
 
 #else
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1206,6 +1207,7 @@ static int top_unchanged(int e, u32 used, u32 cpuBg) {
     h = hash32(h, L->objPrio[e], sizeof L->objPrio[e]);
 #ifdef N3DS_DIRECT
     h = hash32(h, &L->margin[e], sizeof L->margin[e]);
+    h = hash32(h, &L->iris, sizeof L->iris);
 #endif
     // (as layer_bind would at the first group showing it: the same state, so the same texture)
     u32 drawnBefore = sBgDrawn, seen = 0;
@@ -1232,6 +1234,33 @@ static int top_unchanged(int e, u32 used, u32 cpuBg) {
         skipped = 0;
     }
     return same;
+}
+
+// The direct build: the screen transitions' iris (gpu2d_iris) over a whole screen sw wide: black outside a circle round
+// its middle, which opens from nothing to the screen's corners; a ring of quads out to beyond the screen's edges
+static void iris(float sw) {
+#ifdef N3DS_DIRECT
+    if (sLayers.iris < 0) return;
+    enum { N = 64 };  // (the circle's edge at most 0.3 pixels inside the true one)
+    static float c[N + 1][2];
+    if (!c[0][0])
+        for (int i = 0; i <= N; i++) c[i][0] = cosf(6.2831853f * (float)i / N), c[i][1] = sinf(6.2831853f * (float)i / N);
+    static const float black[4] = {0, 0, 0, 1}, uv[4][2];
+    float x = sw / 2, y = 120, r = (float)(0x1000 - sLayers.iris) / 0x1000 * sqrtf(x * x + y * y), o = sw;
+    source(0);
+    opaque();
+    sTag = ST_SCREEN;
+    begin();
+    for (int i = 0; i < N; i++) {
+        const float *a = c[i], *b = c[i + 1];
+        const float xy[4][2] = {{x + r * a[0], y + r * a[1]}, {x + o * a[0], y + o * a[1]}, {x + o * b[0], y + o * b[1]},
+                                {x + r * b[0], y + r * b[1]}};
+        quad(xy, uv, black);
+    }
+    end();
+#else
+    (void)sw;
+#endif
 }
 
 // ACWW_SHOW_FPS=1: the game's frames and the pictures composited a second (over the last second, "60/30"), in the top
@@ -1480,6 +1509,7 @@ static void frame_job(void *arg) {
             C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
             C3D_AlphaTest(false, GPU_ALWAYS, 0);
             opaque();
+            iris(sw);
             if (s == 0) show_fps();
             continue;
         }
@@ -1494,6 +1524,7 @@ static void frame_job(void *arg) {
         const float uv[4][2] = {{0, 1}, {pw / size, 1}, {pw / size, 1 - ph / size}, {0, 1 - ph / size}};
         quad(xy, uv, 0);
         end();
+        iris(sw);
         if (s == 0) show_fps();
     }
     GSPGPU_FlushDataCache(sV, (u32)sNV * sizeof(DVertex));

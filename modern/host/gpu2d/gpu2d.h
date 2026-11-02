@@ -90,6 +90,7 @@ typedef struct Gpu2dLayers {
     int nsprites[2];
 #ifdef N3DS_DIRECT
     Gpu2dMarginAffine margin[2];  // per engine, for this frame
+    int iris;                     // the screen transitions' iris (gpu2d_iris) for this frame
 #endif
 } Gpu2dLayers;
 
@@ -134,6 +135,9 @@ void gpu2d_draw_layers(int record);
 // an affine BG's parameters on a line beyond the DS's screen (Gpu2dMarginAffine), given by the game before a frame (its
 // V-blank) for that frame
 void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_t y);
+// the screen transitions' iris, drawn by the host over both whole screens: 0 open to 0x1000 closed, -1 none; given by
+// the game at its V-blank, from the next frame on
+void gpu2d_iris(int progress);
 #endif
 // screen 0 top, 1 bottom (POWCNT1 bit 15 decides which engine shows where): 256x192 pixels, 0xffRRGGBB
 const uint32_t *gpu2d_screen(int screen);
