@@ -796,3 +796,19 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
       (controls), R6.2 (languages), R5.2 (stereoscopic 3D).
   Proposed to the user: (a) first (the largest gain expected where town is full), then (f).
 
+- 2026-11-02: the iris drawn anew over the whole wide screens (the user: the iris slow, and its edges beyond the DS's
+  screen plain black). The game's iris (IrisWipe_*, src/main/unk_020411dc.cpp) is window 0 changed every line by an
+  H-blank task (the circle's span on each line), outside it a BG2 of one black tile: every line's state differs, so
+  the 2D was composed a piece a line (each pass a quad a line, the window regions too), and the margins, outside the
+  window, were black. Now under N3DS_DIRECT the game sets up its layers as before but without window 0 and with the
+  black BG2 hidden (as inside the window), adds no H-blank task, and gives the progress (0 open to 0x1000 closed)
+  at its V-blank to `gpu2d_iris` (recorded with the frame as `gpu2d_margin_affine`; -1 at IrisWipe_End, in the same
+  V-blank as the cover and the brightness that follow); pica_display.c draws, after a screen's picture, black
+  outside a circle round the screen's middle (64 quads of a ring) whose radius goes from 0 to the screen's corners
+  (233 pixels on the top screen, 200 on the bottom one; the DS's 160 to its corners). Checks (Azahar, the continue
+  script on wide.sav, `ACWW_RTC` fixed, `ACWW_PICA_SHOT` every 5 frames): the iris closes at frames 2590-2615 and
+  opens at 3480-3565 on both screens, round and centred, the wide 3D picture and the sky's margins inside it.
+  `ACWW_PICA_STATS` over the 300 frames with the opening: window regions 111 -> 61 kpixels a frame (78 -> 1 quads),
+  BG layers 124 -> 82 quads, "as it is" and marks 6 + 6 -> 0 + 2 quads; the ring 0.5 draws, 29 quads. Azahar's frames a
+  second unchanged (core 0 bound there); on hardware to be measured. Not changed: the fades and the cut, the plain
+  3DS and PC builds (all under N3DS_DIRECT).
