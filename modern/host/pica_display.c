@@ -71,6 +71,15 @@ static int sNV;
 static Gpu2dLayers sLayers;            // its pixel buffers in linear memory (the GPU's transfers read them)
 static C3D_Tex sBg[2][4], sObj[2], sRegion[2], s3d;
 static C3D_Tex sSprites;               // the OBJs as sprites (Gpu2dLayers.sprite: the direct build), their atlas
+// The direct build: each engine's backdrop colours, a texel row per line (8 x 256, the lines after the last as the
+// last), so that the backdrop is a quad per group and the sky's colour changing every line (its H-blank) doesn't cut
+// the layers into lines: thin quads are slow on the GPU (each 8x8 tile of the target is read and written per line)
+#ifdef N3DS_DIRECT
+static C3D_Tex sBackdrop[2];
+enum { kLineBackdrop = 1 };
+#else
+enum { kLineBackdrop = 0 };
+#endif
 static u32 *s3dStage;                  // the 3D picture as RGBA8, row by row
 static C3D_Tex *s3dTex;                // this frame's 3D picture: the GPU's (premultiplied) or s3d
 static int s3dPremultiplied;
@@ -164,6 +173,18 @@ void pdisp_submit(int kind, void (*job)(void *), void *arg) {
     LightLock_Unlock(&sLock);
 }
 
+// ACWW_PICA_PROBE=1 (with ACWW_FPS, for the GPU's time on hardware): every 300 composited frames the next of these
+// left out, each report saying which (the pictures are wrong meanwhile): 0 nothing, 1 the sprites' upload, 2 the
+// blended passes (the 3D layer), 3 the backdrop, 4 the BGs and OBJs, 5 every draw, 6 every draw, the screens'
+// clears and the sprites' upload
+enum { PROBES = 7 };
+static int sProbe = -1, sProbeMode;
+static u32 sFrame;
+static int probe_skips(int what) {
+    static const u8 kSkips[PROBES] = {0, 1, 2, 4, 8, 16 | 2 | 4 | 8, 32 | 16 | 2 | 4 | 8 | 1};
+    return sProbe > 0 && (kSkips[sProbeMode] & what);
+}
+
 // ACWW_FPS: the GPU's drawing time (citro3d's, from a frame's commands to their end) of the 3D pictures and of the
 // compositing, every 300 frames composited; C3D_GetDrawingTime is the frame's before C3D_FrameBegin's
 void pdisp_frame_begun(int kind) {
@@ -175,8 +196,10 @@ void pdisp_frame_begun(int kind) {
     if (last >= 0) ms[last] += C3D_GetDrawingTime();
     last = kind;
     if (kind == PDISP_COMP && ++composited % 300 == 0) {
-        fprintf(stderr, "pica: the GPU's drawing, ms a composited frame: 3D %.1f, compositing %.1f\n", ms[0] / 300,
+        fprintf(stderr, "pica: the GPU's drawing, ms a composited frame: 3D %.1f, compositing %.1f", ms[0] / 300,
                 ms[1] / 300);
+        if (sProbe > 0) fprintf(stderr, " (probe %d)", sProbeMode);
+        fprintf(stderr, "\n");
         ms[0] = ms[1] = 0;
     }
 }
@@ -220,6 +243,11 @@ int pdisp_init(void) {
         return 0;
     C3D_TexSetFilter(&sSprites, GPU_NEAREST, GPU_NEAREST);
     C3D_TexSetWrap(&sSprites, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    for (int e = 0; e < 2; e++) {
+        if (!C3D_TexInit(&sBackdrop[e], 8, 256, GPU_RGBA8)) return 0;
+        C3D_TexSetFilter(&sBackdrop[e], GPU_NEAREST, GPU_NEAREST);
+        C3D_TexSetWrap(&sBackdrop[e], GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    }
 #endif
     return 1;
 }
@@ -279,7 +307,6 @@ typedef struct {
     u8 pal[0x200];             // and the BG palette
 } BgTex;
 static BgTex sBgTex[2][4];
-static u32 sFrame;
 static u16 sTmpMap[64 * 64];
 static u8 sMorton[8][8];       // a texel's place in its 8x8 tile: [y][x]
 
@@ -454,13 +481,16 @@ static int sMark;
 // ACWW_PICA_STATS=1: the pixels the GPU fills and the draws, per kind of pass, every 300 composited frames
 enum { ST_BACKDROP, ST_REGION, ST_OBJ, ST_LAYER, ST_BLEND, ST_ASIS, ST_MARK, ST_EFFECT, ST_UP, ST_SCREEN, ST_N };
 static int sStats = -1, sTag;
-static double sStatPx[ST_N], sStatDraws[ST_N], sStatObj, sStatBg;
+static double sStatPx[ST_N], sStatDraws[ST_N], sStatQuads[ST_N], sStatObj, sStatBg;
 static void begin(void) { sMark = sNV; }
 static void end(void) {
     if (sNV <= sMark) return;
-    C3D_DrawArrays(GPU_TRIANGLES, sMark, sNV - sMark);
+    int skip = probe_skips(16) || (sTag == ST_BLEND && probe_skips(2)) || (sTag == ST_BACKDROP && probe_skips(4)) ||
+               ((sTag == ST_LAYER || sTag == ST_OBJ) && probe_skips(8));
+    if (!skip) C3D_DrawArrays(GPU_TRIANGLES, sMark, sNV - sMark);
     if (sStats) {
         sStatDraws[sTag]++;
+        sStatQuads[sTag] += (sNV - sMark) / 6;
         for (int i = sMark; i < sNV; i += 3) {  // (each triangle's area)
             const float *a = sV[i].pos, *b = sV[i + 1].pos, *c = sV[i + 2].pos;
             float t = ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2;
@@ -473,10 +503,10 @@ static void stats_report(void) {
                                             "effects", "doubling", "screens"};
     static u32 frames;
     if (++frames % 300) return;
-    fprintf(stderr, "pica: kpixels (draws) a composited frame:");
+    fprintf(stderr, "pica: kpixels (draws, quads) a composited frame:");
     for (int i = 0; i < ST_N; i++) {
-        fprintf(stderr, " %s %.0f (%.1f)", kName[i], sStatPx[i] / 300 / 1000, sStatDraws[i] / 300);
-        sStatPx[i] = sStatDraws[i] = 0;
+        fprintf(stderr, " %s %.0f (%.1f, %.0f)", kName[i], sStatPx[i] / 300 / 1000, sStatDraws[i] / 300, sStatQuads[i] / 300);
+        sStatPx[i] = sStatDraws[i] = sStatQuads[i] = 0;
     }
     fprintf(stderr, " | OBJ texels shown %.0f, BG texels shown (CPU BGs) %.0f\n", sStatObj / 300 / 1000,
             sStatBg / 300 / 1000);
@@ -524,6 +554,14 @@ static const Gpu2dLineState *piece_state(const Group *g, int i) { return &sLayer
 // further out, with only what goes on beyond the DS's screen (the backdrop, the affine BGs that wrap, the effects)
 static int sMargin;
 static float sX0 = 0, sX1 = W, sY = 0;
+// The direct build's wide view (screen_compose): an engine composed straight onto its screen, the DS's picture in its
+// middle; over [sX0, sX1) and sY lines beyond the first and last what goes on beyond the DS's screen (the backdrop,
+// the wide 3D picture, the BGs margin_bg names, the effects), everything else in the DS's 256x192
+#ifdef N3DS_DIRECT
+static int sScreenMode;
+#else
+enum { sScreenMode = 0 };
+#endif
 static float piece_y0(const Group *g, int i) { return g->y0[i] == 0 ? 0.0f - sY : (float)g->y0[i]; }
 static float piece_y1(const Group *g, int i) { return g->y1[i] == H ? H + sY : (float)g->y1[i]; }
 // (group: the passes a margin layer can leave out - everything under it is a 2nd target the effects are allowed
@@ -555,6 +593,19 @@ static BgTex *layer_bind(const Group *g, int l, int is3d) {
     source(&b->tex);
     return b;
 }
+// an affine BG's quad over [x0, x1) x [y0, y1): at pixel (x, y) the texel ((X + PA x + PB (y - yr)) >> 8,
+// (Y + PC x + PD (y - yr)) >> 8), p = PA, PB, PC, PD, X, Y (line yr's reference point); the corners half a pixel out,
+// so that the pixels' centres sample those
+static void affine_quad(const BgTex *b, float x0, float x1, float y0, float y1, float yr, const float p[6]) {
+    const float xy[4][2] = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+    float uv[4][2];
+    for (int k = 0; k < 4; k++) {
+        float px = xy[k][0] - 0.5f, py = xy[k][1] - 0.5f - yr;
+        float tx = (p[4] + p[0] * px + p[1] * py) / 256.0f, ty = (p[5] + p[2] * px + p[3] * py) / 256.0f;
+        uv[k][0] = tx / b->w, uv[k][1] = 1.0f - ty / b->h;
+    }
+    quad(xy, uv, 0);
+}
 // a layer's quad for piece i
 static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
     const Gpu2dLineState *s = piece_state(g, i);
@@ -562,6 +613,10 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
     if (l == 0 && is3d) {  // (the 3D layer scrolled by BG0HOFS; nothing where it is scrolled away)
         float x0 = s->hofs3d < 0 ? (float)-s->hofs3d : 0, x1 = s->hofs3d > 0 ? (float)(W - s->hofs3d) : W;
         float ox = s3dWide ? GPU3D_WIDE_X : 0, oy = s3dWide ? GPU3D_WIDE_Y : 0, tw = s3dWide ? 512 : TEX;
+        if (sScreenMode && s3dWide) {  // (as far as the screen and the wide picture go)
+            float a = (float)(-s->hofs3d - GPU3D_WIDE_X), b = (float)(W + GPU3D_WIDE_X - s->hofs3d);
+            x0 = sX0 > a ? sX0 : a, x1 = sX1 < b ? sX1 : b, y0 = piece_y0(g, i), y1 = piece_y1(g, i);
+        }
         rect(x0, y0, x1, y1, (x0 + s->hofs3d + ox) / tw, (x1 + s->hofs3d + ox) / tw, y0 + oy, TEX, 0);
         return;
     }
@@ -569,29 +624,45 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
         if (l == 4 || !(g->s->gpuBg >> l & 1)) rect(0, y0, W, y1, 0, (float)W / TEX, y0, TEX, 0);
         return;
     }
+    // (screen_compose: beyond the DS's screen only the BGs the margins draw)
+    int out = sMargin || (sScreenMode && margin_bg(g->engine, s, l, is3d, 0));
     if (b->kind == 1) {  // text: scrolled (the margins: on beyond the screen's edges, as it repeats)
-        float x0 = sMargin ? sX0 : 0, x1 = sMargin ? sX1 : W;
+        float x0 = out ? sX0 : 0, x1 = out ? sX1 : W;
         float u0 = (s->bghofs[l] + x0) / b->w, u1 = (s->bghofs[l] + x1) / b->w;
-        if (sMargin) y0 = piece_y0(g, i), y1 = piece_y1(g, i);
+        if (out) y0 = piece_y0(g, i), y1 = piece_y1(g, i);
         rect(x0, y0, x1, y1, u0, u1, (float)s->bgvofs[l] + y0, (float)b->h, 0);
         return;
     }
-    // affine: at pixel (x, y) the texel ((X + PA x + PB (y - y0)) >> 8, (Y + PC x + PD (y - y0)) >> 8), X, Y the
-    // piece's first line's reference point; the corners half a pixel out, so that the pixels' centres sample those
     const int16_t *a = s->affine[l - 2];
     const int32_t *rf = &sLayers.ref[g->engine][g->y0[i]][2 * (l - 2)];
-    float d0 = piece_y0(g, i), d1 = piece_y1(g, i);
-    const float xy[4][2] = {{sX0, d0}, {sX1, d0}, {sX1, d1}, {sX0, d1}};
-    float uv[4][2];
-    for (int k = 0; k < 4; k++) {
-        float px = xy[k][0] - 0.5f, py = xy[k][1] - 0.5f - y0;
-        float tx = ((float)rf[0] + a[0] * px + a[1] * py) / 256.0f, ty = ((float)rf[1] + a[2] * px + a[3] * py) / 256.0f;
-        uv[k][0] = tx / b->w, uv[k][1] = 1.0f - ty / b->h;
+    float d0 = out ? piece_y0(g, i) : y0, d1 = out ? piece_y1(g, i) : y1, e0 = out ? sX0 : 0, e1 = out ? sX1 : W;
+#ifdef N3DS_DIRECT
+    // (screen_compose's margins above and below: a BG whose parameters the game changes line by line, with those it
+    // gives for the lines there - Gpu2dMarginAffine; a line at a time)
+    const Gpu2dMarginAffine *m = &sLayers.margin[g->engine];
+    for (int k = 0; sScreenMode && out && m->bg == l && k < 2 * GPU2D_MARGIN; k++) {
+        int line = k < GPU2D_MARGIN ? k - GPU2D_MARGIN : H + k - GPU2D_MARGIN;
+        if (k < GPU2D_MARGIN ? !(i == 0 && g->y0[0] == 0 && line >= -sY) : !(i == g->n - 1 && g->y1[i] == H && line < H + sY))
+            continue;
+        const float p[6] = {m->pa[k], a[1], a[2], a[3], (float)m->x[k], (float)m->y[k]};
+        affine_quad(b, e0, e1, (float)line, (float)line + 1, (float)line, p);
+        if (k < GPU2D_MARGIN) d0 = y0;
+        else d1 = y1;
     }
-    quad(xy, uv, 0);
+#endif
+    const float p[6] = {a[0], a[1], a[2], a[3], (float)rf[0], (float)rf[1]};
+    affine_quad(b, e0, e1, d0, d1, y0, p);
 }
 // (the OBJs of a priority only on the lines that have some: the OBJ layer is mostly empty)
 static int sObjPrio;
+// a sprite's lines [y0, y1), within the DS's screen (screen_compose: the target goes on beyond it)
+static void sprite_rect(const Gpu2dSprite *s, int y0, int y1) {
+    int x0 = s->x, x1 = s->x + s->w;
+    if (sScreenMode) x0 = x0 < 0 ? 0 : x0, x1 = x1 > W ? W : x1;
+    if (x1 > x0)
+        rect((float)x0, (float)y0, (float)x1, (float)y1, (float)(s->u + x0 - s->x) / GPU2D_ATLAS_W,
+             (float)(s->u + x1 - s->x) / GPU2D_ATLAS_W, (float)(s->v + y0 - s->y), GPU2D_ATLAS_H, 0);
+}
 // the sprites of priority sObjPrio in the group's pieces: the later in OAM first, so that the earlier is in front
 static void sprite_quads(const Group *g) {
     const Gpu2dSprite *sp = sLayers.sprites[g->engine];
@@ -600,9 +671,7 @@ static void sprite_quads(const Group *g) {
         if (s->prio != sObjPrio || s->window) continue;
         for (int i = 0; i < g->n; i++) {
             int y0 = s->y > g->y0[i] ? s->y : g->y0[i], y1 = s->y + s->h < g->y1[i] ? s->y + s->h : g->y1[i];
-            if (y1 > y0)
-                rect(s->x, (float)y0, (float)(s->x + s->w), (float)y1, (float)s->u / GPU2D_ATLAS_W,
-                     (float)(s->u + s->w) / GPU2D_ATLAS_W, (float)(s->v + y0 - s->y), GPU2D_ATLAS_H, 0);
+            if (y1 > y0) sprite_rect(s, y0, y1);
         }
     }
 }
@@ -692,7 +761,7 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
 
 static void group(const Group *g) {
     const Gpu2dLineState *s = g->s;
-    float white[4] = {1, 1, 1, 1}, col[4];
+    float white[4] = {1, 1, 1, 1};
     C3D_AlphaTest(false, GPU_ALWAYS, 0);
     source(0);
     opaque();
@@ -714,11 +783,19 @@ static void group(const Group *g) {
     stencil(GPU_ALWAYS, (bld >> 13 & 1) | (bld >> 5 & 1) << 1 | outside, 0, 0xff);
     sTag = ST_BACKDROP;
     begin();
+#ifdef N3DS_DIRECT  // (a quad over the group's lines, texel row y the colour of line y)
+    source(&sBackdrop[g->engine]);
+    rect(sX0, piece_y0(g, 0), sX1, piece_y1(g, g->n - 1), 0, 1, piece_y0(g, 0), 256, 0);
+    end();
+    source(0);
+#else
+    float col[4];
     for (int i = 0; i < g->n; i++) {
         bgr555(piece_state(g, i)->backdrop, 1, col);
         rect(sX0, piece_y0(g, i), sX1, piece_y1(g, i), 0, 0, 0, TEX, col);
     }
     end();
+#endif
     if (windows && !sMargin && sLayers.sprite) {
         // the regions from the windows' shapes (with sprites): outside, then the OBJ window's OBJs, window 1, window 0
         // over them, each writing its region (bits 3-4) and whether it allows the effects (bit 2)
@@ -726,7 +803,9 @@ static void group(const Group *g) {
         sTag = ST_REGION;
         stencil(GPU_ALWAYS, shows[0] & 0x20 ? 0 : 4, 0, 0x1c);
         begin();
-        for (int i = 0; i < g->n; i++) rect(0, (float)g->y0[i], W, (float)g->y1[i], 0, 0, 0, TEX, 0);
+        for (int i = 0; i < g->n; i++)
+            if (sScreenMode) rect(sX0, piece_y0(g, i), sX1, piece_y1(g, i), 0, 0, 0, TEX, 0);
+            else rect(0, (float)g->y0[i], W, (float)g->y1[i], 0, 0, 0, TEX, 0);
         end();
         if (dispcnt & 0x8000) {
             source(&sSprites);
@@ -738,9 +817,7 @@ static void group(const Group *g) {
                 const Gpu2dSprite *t = &sp[k];
                 for (int i = 0; t->window && i < g->n; i++) {
                     int y0 = t->y > g->y0[i] ? t->y : g->y0[i], y1 = t->y + t->h < g->y1[i] ? t->y + t->h : g->y1[i];
-                    if (y1 > y0)
-                        rect(t->x, (float)y0, (float)(t->x + t->w), (float)y1, (float)t->u / GPU2D_ATLAS_W,
-                             (float)(t->u + t->w) / GPU2D_ATLAS_W, (float)(t->v + y0 - t->y), GPU2D_ATLAS_H, 0);
+                    if (y1 > y0) sprite_rect(t, y0, y1);
                 }
             }
             end();
@@ -778,11 +855,29 @@ static void group(const Group *g) {
     int margin = 0, margins = 0;  // (the margins' layers drawn, of how many)
     for (int l = 0; sMargin && l < 4; l++)
         margins += (dispcnt & 0x100u << l) && margin_bg(g->engine, s, l, is3d, windows) && (!windows || shows[0] >> l & 1);
+    // (screen_compose without windows: the first layer and the last one drawn, for the passes that would draw nothing -
+    // as the margins' sAllSecond and sNoMark)
+    int first = -1, last = -1;
+    for (int p = 3; sScreenMode && !windows && p >= 0; p--)
+        for (int n = 0; n <= 4; n++) {
+            int l = n == 4 ? 4 : 3 - n;
+            if (l < 4 ? (dispcnt & 0x100u << l) && s->prio[l] == p : (dispcnt & 0x1000) && obj_lines(g, p)) {
+                if (first < 0) first = p * 8 + l;
+                last = p * 8 + l;
+            }
+        }
     for (int p = 3; p >= 0; p--) {
         for (int n = 0; n <= 4; n++) {  // (BG3 to BG0, then the OBJs of this priority in front of them)
             int l = n == 4 ? 4 : 3 - n;
             if (l < 4 && (!(dispcnt & 0x100u << l) || s->prio[l] != p)) continue;
             if (l == 4 && !(dispcnt & 0x1000)) continue;
+            if (first >= 0) {
+                sAllSecond = p * 8 + l == first && (bld >> 13 & 1);
+                sNoMark = p * 8 + l == last && effect != 2 && effect != 3;
+                layer(g, l, p, is3d, 0, 0);
+                sAllSecond = sNoMark = 0;
+                continue;
+            }
             if (sMargin) {  // (under the first: the backdrop alone; after the last: only the master brightness)
                 if (l == 4 || !margin_bg(g->engine, s, l, is3d, windows) || (windows && !(shows[0] >> l & 1))) continue;
                 sAllSecond = margin == 0 && (bld >> 13 & 1) && !outside;
@@ -835,6 +930,8 @@ static void upload(void *src, C3D_Tex *t, u32 bytes, GX_TRANSFER_FORMAT fmt) {
 // a reload of their reference points (an H-blank write)
 static int same_run(int e, int y) {
     const Gpu2dLineState *a = &sLayers.line[e][y], *b = a + 1;
+    Gpu2dLineState t;
+    if (kLineBackdrop) t = *b, t.backdrop = a->backdrop, b = &t;  // (sBackdrop has it)
     if (memcmp(a, b, sizeof *a)) return 0;
     for (int i = 0; i < 2; i++)
         if ((a->gpuBg >> (2 + i) & 1) && a->bgKind[2 + i] == 2 &&
@@ -929,6 +1026,21 @@ static void margins2d(int e, float x0, float y0, float sw) {
     projection(sw, 240.0f, 1);
 }
 
+// The direct build's wide view: engine e straight onto the screen being drawn (sw wide, with a stencil buffer), the
+// DS's picture at (x0, y0) - no picture of the engine first, no copy, no margins drawn apart (sScreenMode)
+static void screen_compose(int e, float x0, float y0, float sw) {
+    C3D_Mtx m;
+    Mtx_OrthoTilt(&m, -x0, sw - x0, 240.0f - y0, -y0, 0.0f, 1.0f, true);  // (the DS's pixels, as projection's)
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, sUProjection, &m);
+#ifdef N3DS_DIRECT
+    sScreenMode = 1, sX0 = -x0, sX1 = sw - x0, sY = y0;
+    colour_writes(1);
+    compose(e);
+    sScreenMode = 0, sX0 = 0, sX1 = W, sY = 0;
+#endif
+    projection(sw, 240.0f, 1);
+}
+
 // ACWW_SHOW_FPS=1: the game's frames and the pictures composited a second (over the last second, "60/30"), in the top
 // screen's top left corner: characters of 3x5 pixels (bit 14 the top left one, row by row; 0-9, then '/'), each
 // pixel 2x2, white on black
@@ -962,9 +1074,68 @@ static void show_fps(u64 gameFrame) {
     end();
 }
 
+// screen s's picture as drawn (its target read back: 240 x its width, a turned target's rows being the screen's
+// columns from the left, its columns the lines from the bottom; RGBA8), 0 without one. Once the GPU has drawn it: an
+// empty frame's C3D_FrameBegin waits for that (a read right after C3D_FrameEnd raced the GPU; one in a frame would
+// only be queued)
+static const u32 *screen_pixels(int s) {
+    static u32 *px;
+    u32 sw = s == 0 ? 400 : 320;
+    if (!sScreen[s] || !(px || (px = linearAlloc(240 * 400 * 4)))) return 0;
+    C3D_FrameBegin(0);
+    C3D_FrameEnd(0);
+    C3D_SyncDisplayTransfer((u32 *)sScreen[s]->frameBuf.colorBuf, GX_BUFFER_DIM(240, sw), px, GX_BUFFER_DIM(240, sw),
+                            kTiledToLinear);
+    GSPGPU_InvalidateDataCache(px, 240 * sw * 4);
+    return px;
+}
+// ACWW_PICA_SHOT=<frame>,<frame>,...: both screens as drawn at those game frames, to sdmc:/3ds/acww/screen<0|1>-<frame>.ppm
+static void screen_shots(const char *list, u64 gameFrame) {
+    int want = 0;
+    for (const char *p = list; *p && !want; p = strchr(p, ',') ? strchr(p, ',') + 1 : "")
+        want = strtoull(p, 0, 10) == gameFrame;
+    for (int s = 0; want && s < 2; s++) {
+        u32 sw = s == 0 ? 400 : 320;
+        const u32 *px = screen_pixels(s);
+        char name[64];
+        snprintf(name, sizeof name, "sdmc:/3ds/acww/screen%d-%llu.ppm", s, (unsigned long long)gameFrame);
+        FILE *f = px ? fopen(name, "wb") : 0;
+        if (!f) continue;
+        fprintf(f, "P6\n%lu 240\n255\n", (unsigned long)sw);
+        for (u32 y = 0; y < 240; y++)
+            for (u32 x = 0; x < sw; x++) {
+                u32 c = px[x * 240 + 239 - y];  // (r << 24 | g << 16 | b << 8 | a)
+                u8 rgb[3] = {(u8)(c >> 24), (u8)(c >> 16), (u8)(c >> 8)};
+                fwrite(rgb, 1, 3, f);
+            }
+        fclose(f);
+    }
+}
+
+// the checks on the screens as drawn
+static int sHash = -1;
+static void screen_checks(u64 gameFrame) {
+    static const char *shots = (const char *)-1;
+    if (shots == (const char *)-1) shots = getenv("ACWW_PICA_SHOT");
+    // ACWW_PICA_HASH and the wide view: the screens' DS pictures (lines 24-215 of the targets' columns, either way
+    // round), as the engines' pictures before
+    if (sHash > 0 && sScreenStencil && sScreen[0] && sScreen[1]) {
+        u32 hash = 2166136261u;
+        for (int s = 0; s < 2; s++) {
+            u32 x0 = s == 0 ? (400 - W) / 2 : (320 - W) / 2;
+            const u32 *px = screen_pixels(s);
+            for (u32 x = x0; px && x < x0 + W; x++)
+                for (u32 y = (240 - H) / 2; y < (240 + H) / 2; y++) hash = (hash ^ px[x * 240 + y]) * 16777619u;
+        }
+        fprintf(stderr, "pica: screens %u (game frame %llu) hash %08lx\n", (unsigned)sFrame, (unsigned long long)gameFrame,
+                (unsigned long)hash);
+    }
+    if (shots) screen_shots(shots, gameFrame);
+}
+
 static void frame_job(void *arg);
 static struct FrameArgs { void *texture3d; const uint32_t *picture3d; int record; u64 gameFrame; } sFrameArgs[2];
-static int sHash = -1;
+static int sDirectFrame;  // (the last composited frame went straight onto the screens: screen_compose)
 void pdisp_frame(void *texture3d, const uint32_t *picture3d) {
     pdisp_wait(PDISP_COMP, 1);  // (the arguments of the compositing before the last)
     sScreenRead[0] = sScreenRead[1] = 0;
@@ -983,6 +1154,8 @@ static void frame_job(void *arg) {
     void *texture3d = a->texture3d;
     const uint32_t *picture3d = a->picture3d;
     sFrame++;
+    if (sProbe < 0) sProbe = getenv("ACWW_PICA_PROBE") && atoi(getenv("ACWW_PICA_PROBE"));
+    sProbeMode = (int)((sFrame - 1) / 300 % PROBES);
     s3dTex = texture3d ? (C3D_Tex *)texture3d : &s3d;
     s3dPremultiplied = texture3d != 0;
     s3dWide = texture3d && gpu3d_wide();
@@ -1000,6 +1173,18 @@ static void frame_job(void *arg) {
         C3D_FrameBegin(0);  // (waits for the GPU's work before)
     }
     pdisp_frame_begun(PDISP_COMP);
+#ifdef N3DS_DIRECT
+    for (int e = 0; e < 2; e++) {
+        u32 *t = sBackdrop[e].data;
+        for (int y = 0; y < 256; y++) {
+            u16 c = sLayers.line[e][y < H ? y : H - 1].backdrop;
+            u32 r = c & 31, g = c >> 5 & 31, b = c >> 10 & 31;
+            u32 v = (r * 255 + 15) / 31 << 24 | (g * 255 + 15) / 31 << 16 | (b * 255 + 15) / 31 << 8 | 255;
+            for (int x = 0; x < 8; x++) t[y / 8 * 64 + sMorton[y % 8][x]] = v;
+        }
+        C3D_TexFlush(&sBackdrop[e]);
+    }
+#endif
     for (int e = 0; e < 2; e++) {
         for (int n = 0; n < 4; n++)
             if ((used[e] & 0x100u << n) && (cpuBg[e] >> n & 1))
@@ -1007,8 +1192,15 @@ static void frame_job(void *arg) {
         if ((used[e] & 0x1000) && !sLayers.sprite) upload(sLayers.obj[e], &sObj[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
         if ((used[e] & 0xe000) && !sLayers.sprite) upload(sLayers.region[e], &sRegion[e], W * H * 4, GX_TRANSFER_FMT_RGBA8);
     }
-    if (sLayers.sprite && (sLayers.nsprites[0] || sLayers.nsprites[1])) {
-        u32 bytes = GPU2D_ATLAS_W * GPU2D_ATLAS_H * 4, dim = GX_BUFFER_DIM(GPU2D_ATLAS_W, GPU2D_ATLAS_H);
+    if (sLayers.sprite && (sLayers.nsprites[0] || sLayers.nsprites[1]) && !probe_skips(1)) {
+        // (only the rows the sprites use, from the top, in whole 8-line tile rows: the transfer writes the texture's
+        // rows from its start)
+        int rows = 8;
+        for (int e = 0; e < 2; e++)
+            for (int k = 0; k < sLayers.nsprites[e]; k++)
+                if (sLayers.sprites[e][k].v + sLayers.sprites[e][k].h > rows) rows = sLayers.sprites[e][k].v + sLayers.sprites[e][k].h;
+        rows = (rows + 7) & ~7;
+        u32 bytes = GPU2D_ATLAS_W * (u32)rows * 4, dim = GX_BUFFER_DIM(GPU2D_ATLAS_W, rows);
         GSPGPU_FlushDataCache(sLayers.sprite, bytes);
         HOST_PROF_ON(gPicaProf, PROF_UPLOAD);
         C3D_SyncDisplayTransfer(sLayers.sprite, dim, sSprites.data, dim,
@@ -1045,7 +1237,15 @@ static void frame_job(void *arg) {
     C3D_CullFace(GPU_CULL_NONE);
     for (int i = 1; i < 6; i++) C3D_TexEnvInit(C3D_GetTexEnv(i));
     C3D_DepthMap(true, -1.0f, 0.0f);
-    for (int e = 0; e < 2; e++) {
+#ifdef N3DS_DIRECT
+    static int screenMode = -1;  // (ACWW_PICA_SCREEN=0: the engines' pictures first, then copied, as before)
+    if (screenMode < 0) screenMode = !getenv("ACWW_PICA_SCREEN") || atoi(getenv("ACWW_PICA_SCREEN"));
+    int direct = screenMode && sScreenStencil && sScreen[0] && sScreen[1];  // (screen_compose)
+#else
+    const int direct = 0;
+#endif
+    sDirectFrame = direct;
+    for (int e = 0; e < 2 && !direct; e++) {
         C3D_RenderTargetClear(sCompTarget[e], C3D_CLEAR_ALL, 0, 0);
         C3D_FrameDrawOn(sCompTarget[e]);
         colour_writes(1);
@@ -1076,8 +1276,16 @@ static void frame_job(void *arg) {
             pic = &sUp, pw = 2 * W, ph = 2 * H, size = UP;
         }
         float dw = sUpTarget ? 320.0f : W, dh = sUpTarget ? 240.0f : H, x0 = (sw - dw) / 2, y0 = (240 - dh) / 2;
-        C3D_RenderTargetClear(sScreen[s], C3D_CLEAR_ALL, 0x000000ff, 0);
+        if (!probe_skips(32)) C3D_RenderTargetClear(sScreen[s], C3D_CLEAR_ALL, 0x000000ff, 0);
         C3D_FrameDrawOn(sScreen[s]);
+        if (direct) {
+            screen_compose(e, x0, y0, sw);
+            C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
+            C3D_AlphaTest(false, GPU_ALWAYS, 0);
+            opaque();
+            if (s == 0) show_fps(a->gameFrame);
+            continue;
+        }
         projection(sw, 240.0f, 1);
         if (s3dWide && e == 0 && (used[0] & 8) && margins_3d()) margins(x0, y0);
         else if (sScreenStencil) margins2d(e, x0, y0, sw);
@@ -1097,20 +1305,27 @@ static void frame_job(void *arg) {
     if (sHash < 0) sHash = getenv("ACWW_PICA_HASH") && atoi(getenv("ACWW_PICA_HASH"));
     if (sHash) {  // (both engines' pictures read back: FNV-1a)
         u32 hash = 2166136261u;
-        for (int e = 0; e < 2; e++) {
+        for (int e = 0; e < 2 && !direct; e++) {
             C3D_SyncDisplayTransfer((u32 *)sComp[e].data, GX_BUFFER_DIM(TEX, TEX), sReadback, GX_BUFFER_DIM(TEX, TEX),
                                     kTiledToLinear);
             GSPGPU_InvalidateDataCache(sReadback, TEX * TEX * 4);
             for (int i = 0; i < W * H; i++) hash = (hash ^ sReadback[i]) * 16777619u;
         }
-        fprintf(stderr, "pica: picture %u hash %08lx\n", (unsigned)sFrame, (unsigned long)hash);
+        if (!direct) fprintf(stderr, "pica: picture %u hash %08lx\n", (unsigned)sFrame, (unsigned long)hash);
     }
+    screen_checks(a->gameFrame);
 }
 
 const uint32_t *pdisp_screen(int screen) {
     pdisp_idle();  // (citro3d and the pictures)
     int s = screen & 1, e = s == 0 ? sLayers.topEngine : 1 - sLayers.topEngine;
     if (!sV) return sScreenPx[s];
+    if (!sScreenRead[s] && sDirectFrame) {  // (screen_compose: the DS's picture from the middle of the screen)
+        const u32 *px = screen_pixels(s);
+        u32 x0 = s == 0 ? (400 - W) / 2 : (320 - W) / 2, y0 = (240 - H) / 2;
+        for (int i = 0; px && i < W * H; i++) sScreenPx[s][i] = px[(x0 + (u32)(i % W)) * 240 + 239 - y0 - (u32)(i / W)] >> 8;
+        sScreenRead[s] = 1;
+    }
     if (!sScreenRead[s]) {
         C3D_SyncDisplayTransfer((u32 *)sComp[e].data, GX_BUFFER_DIM(TEX, TEX), sReadback, GX_BUFFER_DIM(TEX, TEX),
                                 kTiledToLinear);
