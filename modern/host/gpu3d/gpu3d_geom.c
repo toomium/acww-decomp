@@ -71,7 +71,11 @@ void gpu3d_set_raster(int on) { sRaster = on; }
 // the wide view: the x and y clip planes at +-num/den w (1/1: the DS's)
 static int sWide;
 static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
+#ifdef N3DS_DIRECT  // (the enhanced port: on unless ACWW_WIDE=0)
+int gpu3d_wide_wanted(void) { return !getenv("ACWW_WIDE") || atoi(getenv("ACWW_WIDE")); }
+#else
 int gpu3d_wide_wanted(void) { return getenv("ACWW_WIDE") && atoi(getenv("ACWW_WIDE")); }
+#endif
 void gpu3d_set_wide(int on) {
     sWide = on;
     sClipNum[0] = on ? 128 + GPU3D_WIDE_X : 1, sClipDen[0] = on ? 128 : 1;
