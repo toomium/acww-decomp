@@ -337,10 +337,16 @@ static void run_events_body(void) {
         if (!watchdogOn) {
             watchdogOn = 1;
             watchdog_start();
-#ifdef N3DS_DIRECT
-            if (!thread_start(log_writer, 0, 0)) fprintf(stderr, "host: no thread for the log\n");
-#endif
         }
+#ifdef N3DS_DIRECT
+        // (from frame 600 on: the start's ROM reads took 10 s on hardware once the log's thread wrote to the SD card
+        // beside them, unverified as the cause; until then the buffer holds the lines)
+        static int logThread;
+        if (!logThread && host_frame() >= 600) {
+            logThread = 1;
+            if (!thread_start(log_writer, 0, 0)) fprintf(stderr, "host: no thread for the log\n");
+        }
+#endif
         __atomic_store_n(&sHeartbeatFrame, (u32)host_frame(), __ATOMIC_RELAXED);
         u16 st = R16(0x04000004);
         if (st & 8) host_irq_raise(1);    // VBlank
