@@ -353,3 +353,24 @@ every frame, or pictures interpolated between the game's (needs R1).
   frames played a second. The slowest: the first big load (frame 184) 581 ms, two later ones (2946, 4887) 280-285
   ms; otherwise at most 40-75 ms. Core 0 a frame: pacing 6.9 ms to spare. The watchdog line at the end is the home
   menu's.
+- 2026-11-02: R5.1, the wide view in the direct build (the user: "a real wide screen", the town on the bottom screen
+  as on a DS, 1:1 with more world around it: the `ACWW_WIDE` of docs/3ds.md, finished). Azahar, the continue script
+  on a save from the PC's save script: the town fills the bottom screen (320x240), the sky the top one (400x240).
+  (1) The game's own culling: `ViewFrustum::calcPlanes` (gViewFrustum, set by Camera::setFovy) builds the side
+  planes from the DS's aspect; Actor::preExecute tests each actor's sphere against them, and an actor outside is
+  neither drawn nor (actorFlags bit 0) run. Under N3DS_DIRECT with the wide view the planes go through the wide 3D
+  picture's edges (x 200/128, y 120/96): an actor in the margins is drawn, and runs, as one on the DS's screen
+  (a change to the game's logic, on purpose). Seen: the white object beside the player's house at the margin
+  (frame 4800) was missing before. The box test (gpu3d_geom.c) had the wide planes already; the field and the trees
+  were drawn there before. (2) The screen transitions: the iris is window 0 with WINOUT 0x24 (outside: BG2, a text
+  BG of one black tile, and the effects; no 3D), and between its closing and opening the windows are off and BG2
+  covers the screen (the PC build's registers, frames 4115-4228 of the continue script). The margins showed the
+  world through both. Now (pica_display.c) the wide 3D picture goes in the bottom screen's margins only where they
+  show the 3D layer outside the windows and no BG of one opaque tile everywhere is in front of it (`margins_3d`);
+  else, as on the top screen, the 2D layers (margins2d), which now also draw the text BGs: with the windows on, or
+  of one tile everywhere (BgTex.uniform; "opaque": no transparent pixel in it). Azahar: the house's exit and the
+  iris in town black to the screens' edges, the town and the sky as before. (3) `ACWW_WIDE` is on by default in
+  the direct build (`ACWW_WIDE=0` off). Not done: the 2D UI (text boxes, the clock) stays in the DS's 256x192 in
+  the middle (24 lines of world below the text box); OBJs and other text BGs aren't drawn in the margins; the speed
+  on hardware (Azahar in town 46-47 game frames a second with the wide view; the old build's hardware numbers:
+  docs/3ds.md 2026-10-29).
