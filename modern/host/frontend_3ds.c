@@ -172,7 +172,15 @@ void frontend_backend_frame(AcwwShm *shm) {
     feed_audio(shm);
 #endif
     static unsigned frames;
-    if (sWaveData && ++frames % 120 == 0 && getenv("ACWW_FPS")) fprintf(stderr, "sound: the DSP's queue ran dry %u times\n", sDry);
+    if (sWaveData && ++frames % 120 == 0 && getenv("ACWW_FPS")) {  // (and the frames played a second: the DS's 32728)
+        static u32 lastRead;
+        static u64 lastTick;
+        u32 r = __atomic_load_n(&shm->audio_read, __ATOMIC_ACQUIRE);
+        u64 now = svcGetSystemTick();
+        fprintf(stderr, "sound: the DSP's queue ran dry %u times; %.0f frames a second played\n", sDry,
+                lastTick ? (double)(r - lastRead) * SYSCLOCK_ARM11 / (double)(now - lastTick) : 0.0);
+        lastRead = r, lastTick = now;
+    }
 }
 
 void frontend_backend_close(void) {
