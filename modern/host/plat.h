@@ -18,6 +18,7 @@ void host_plat_init(void);
 uint64_t host_plat_time_ns(void);           // a monotonic clock in nanoseconds (any epoch)
 void host_plat_sleep_until_ns(uint64_t t);  // sleep until host_plat_time_ns() >= t
 void host_plat_sleep_ms(unsigned ms);
+void host_plat_log_write(void);  // (the 3DS's direct build: the log's lines buffered so far to the SD card)
 // the local (wall-clock) time now, broken down as localtime_r would; 0 if it isn't known
 int host_plat_localtime(struct tm *out);
 

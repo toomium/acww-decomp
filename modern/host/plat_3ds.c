@@ -10,20 +10,62 @@
 #include <time.h>
 
 #include <3ds.h>
+#include <sys/iosupport.h>
 
 #include "plat.h"
 
 #define DIR "sdmc:/3ds/acww/"
 
+#ifdef N3DS_DIRECT
+// The enhanced port's log: stdout and stderr only copy their lines into memory, and hw.c's log thread writes them to
+// log.txt (host_plat_log_write): a write to the SD card took up to 10 s now and then on the user's New 3DS, and
+// stderr's lock, held through it, stopped the game's thread at its next line. A full buffer drops what doesn't fit.
+static char sLog[64 * 1024];
+static size_t sLogLen, sLogLost;
+static LightLock sLogLock, sLogFileLock;  // (the buffer; the file: the log's thread and the program's end)
+static FILE *sLogFile;
+static ssize_t log_put(struct _reent *r, void *fd, const char *p, size_t n) {
+    (void)r, (void)fd;
+    LightLock_Lock(&sLogLock);
+    size_t k = n <= sizeof sLog - sLogLen ? n : 0;
+    memcpy(sLog + sLogLen, p, k);
+    sLogLen += k;
+    sLogLost += n - k;
+    LightLock_Unlock(&sLogLock);
+    return (ssize_t)n;
+}
+static const devoptab_t sLogDevice = {.name = "log", .write_r = log_put};
+
+void host_plat_log_write(void) {
+    static char out[sizeof sLog];
+    LightLock_Lock(&sLogFileLock);
+    LightLock_Lock(&sLogLock);
+    size_t n = sLogLen, lost = sLogLost;
+    memcpy(out, sLog, n);
+    sLogLen = sLogLost = 0;
+    LightLock_Unlock(&sLogLock);
+    if (sLogFile) {
+        fwrite(out, 1, n, sLogFile);
+        if (lost) fprintf(sLogFile, "3ds: the log's buffer was full: %zu bytes lost\n", lost);
+        fflush(sLogFile);
+    }
+    LightLock_Unlock(&sLogFileLock);
+}
+#endif
+
 // The options: there is no environment on the 3DS, so acww.cfg's `NAME=value` lines (`#` comments) become one, and
 // every ACWW_* option of docs/host.md works unchanged. stdout and stderr go to log.txt.
 void host_plat_init(void) {
+#ifdef N3DS_DIRECT  // (the enhanced port: written out by a thread of its own, hw.c log_writer)
+    LightLock_Init(&sLogLock);
+    LightLock_Init(&sLogFileLock);
+    sLogFile = fopen(DIR "log.txt", "w");
+    devoptab_list[STD_OUT] = devoptab_list[STD_ERR] = &sLogDevice;
+    setvbuf(stdout, 0, _IONBF, 0);  // (stderr is unbuffered already: nothing waits in either at the program's end)
+    atexit(host_plat_log_write);
+#else
     freopen(DIR "log.txt", "w", stdout);
     freopen(DIR "log.txt", "a", stderr);
-#ifdef N3DS_DIRECT  // (the enhanced port: written out by a thread of its own, hw.c log_writer)
-    static char logBuf[64 * 1024];
-    setvbuf(stderr, logBuf, _IOFBF, sizeof logBuf);
-#else
     setvbuf(stderr, 0, _IOLBF, 1024);  // (a line at a time: unbuffered, every piece of a line was a write to the SD card)
 #endif
     FILE *f = fopen(DIR "acww.cfg", "r");
