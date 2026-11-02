@@ -516,6 +516,7 @@ static void read_map(u16 *out, const u8 *const *gran, u32 mask, u32 mb, int tw, 
 }
 
 // BG n of an engine as its texture, brought up to date with VRAM: 0 if it can't be
+static u32 sBgDrawn;  // (the BG textures made again so far: top_unchanged)
 static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
     HOST_PROF_ON(gPicaProf, PROF_TILES);
     BgTex *t = &sBgTex[e][n];
@@ -580,6 +581,7 @@ static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
         t->opaque = 1;
         for (u32 k = 0; k < tileBytes && t->opaque; k++) t->opaque = color256 ? c[k] != 0 : (c[k] & 0xf) && (c[k] >> 4);
     }
+    sBgDrawn += (u32)drawn;
     if (drawn && t->staged) {  // (the GPU copies it to VRAM: C3D_SyncTextureCopy)
         C3D_TexFlush(&t->stage);
         if (sRunning && gpuCmdBufOffset) frame_stop();  // (it queues the commands before it unflushed: frame_stop)
@@ -1177,11 +1179,65 @@ static void screen_compose(int e, float x0, float y0, float sw) {
     projection(sw, 240.0f, 1);
 }
 
+// The direct build: the top screen drawn again only when what it shows changed. It is 2D only in town, which the
+// game changes once a game frame (every third frame), while the 3D below is drawn every frame. A hash of its
+// engine's inputs (the lines' states, the sprites and their atlas pixels, the fps text), and its BG textures brought
+// up to date first (bg_texture, once a frame, compares the palette and the VRAM the BG uses: hashing all the
+// engine's BG VRAM instead cost 1.1 ms a frame on hardware); always drawn with the 3D or a layer the CPU drew on it,
+// and while probing. ACWW_PICA_TOPSKIP=0: always drawn.
+static char sFpsText[24];  // (fps_text: what show_fps draws, "" off)
+static u32 hash32(u32 h, const void *p, size_t n) {
+    const u8 *b = p;
+    for (; n >= 4; n -= 4, b += 4) h = (h ^ *(const u32 *)b) * 16777619u, h ^= h >> 15;  // (FNV-1a by words)
+    for (; n; n--) h = (h ^ *b++) * 16777619u;
+    return h;
+}
+static int top_unchanged(int e, u32 used, u32 cpuBg) {
+    HOST_PROF_ON(gPicaProf, PROF_HASH);
+    static int on = -1;
+    static u32 last;
+    if (on < 0) on = !getenv("ACWW_PICA_TOPSKIP") || atoi(getenv("ACWW_PICA_TOPSKIP"));
+    const Gpu2dLayers *L = &sLayers;
+    int cpu = (used & 0xf00u & cpuBg << 8) || ((used & 0x1000) && !L->sprite) || ((used & 0xe000) && !L->sprite) ||
+              (e == 0 && (used & 8));  // (the CPU's layers, the 3D)
+    u32 h = 2166136261u ^ (u32)e;
+    h = hash32(h, L->line[e], sizeof L->line[e]);
+    h = hash32(h, L->ref[e], sizeof L->ref[e]);
+    h = hash32(h, L->objPrio[e], sizeof L->objPrio[e]);
+#ifdef N3DS_DIRECT
+    h = hash32(h, &L->margin[e], sizeof L->margin[e]);
+#endif
+    // (as layer_bind would at the first group showing it: the same state, so the same texture)
+    u32 drawnBefore = sBgDrawn, seen = 0;
+    for (int y = 0; y < H && !cpu; y++) {
+        const Gpu2dLineState *ls = &L->line[e][y];
+        for (int n = 0; n < 4; n++)
+            if (!(seen >> n & 1) && (ls->dispcnt & 0x100u << n) && (ls->gpuBg >> n & 1) && !(n == 0 && e == 0 && (ls->dispcnt & 8)))
+                bg_texture(e, n, ls), seen |= 1u << n;
+    }
+    h = hash32(h, &L->nsprites[e], sizeof L->nsprites[e]);
+    for (int k = 0; k < L->nsprites[e]; k++) {
+        const Gpu2dSprite *t = &L->sprites[e][k];
+        h = hash32(h, t, sizeof *t);
+        for (int y = t->v; L->sprite && y < t->v + t->h && y < GPU2D_ATLAS_H; y++)
+            h = hash32(h, L->sprite + (size_t)y * GPU2D_ATLAS_W + t->u, (size_t)t->w * 4);
+    }
+    h = hash32(h, sFpsText, sizeof sFpsText);
+    int same = on && !cpu && sProbe <= 0 && h == last && sBgDrawn == drawnBefore;
+    last = cpu ? 0 : h;
+    static u32 frames, skipped;  // (ACWW_PICA_STATS: how often, every 300 frames)
+    skipped += (u32)same;
+    if (sStats > 0 && ++frames % 300 == 0) {
+        fprintf(stderr, "pica: the top screen drawn again in %lu of 300 frames\n", (unsigned long)(300 - skipped));
+        skipped = 0;
+    }
+    return same;
+}
+
 // ACWW_SHOW_FPS=1: the game's frames and the pictures composited a second (over the last second, "60/30"), in the top
 // screen's top left corner: characters of 3x5 pixels (bit 14 the top left one, row by row; 0-9, then '/'), each
 // pixel 2x2, white on black
-static void show_fps(u64 gameFrame) {
-    static const u16 kChar[11] = {0x7b6f, 0x2c97, 0x73e7, 0x73cf, 0x5bc9, 0x79cf, 0x79ef, 0x7249, 0x7bef, 0x7bcf, 0x12a4};
+static void fps_text(u64 gameFrame) {  // (every composited frame, drawn or not)
     static int on = -1;
     static u32 pictures, fps, pps;
     static u64 since, sinceFrame;
@@ -1194,8 +1250,13 @@ static void show_fps(u64 gameFrame) {
         fps = (u32)((gameFrame - sinceFrame) * 1000 / (now - since)), pps = (u32)(pictures * 1000 / (now - since));
         pictures = 0, since = now, sinceFrame = gameFrame;
     }
-    char text[24];
-    int n = snprintf(text, sizeof text, "%lu/%lu", (unsigned long)fps, (unsigned long)pps);
+    snprintf(sFpsText, sizeof sFpsText, "%lu/%lu", (unsigned long)fps, (unsigned long)pps);
+}
+static void show_fps(void) {
+    static const u16 kChar[11] = {0x7b6f, 0x2c97, 0x73e7, 0x73cf, 0x5bc9, 0x79cf, 0x79ef, 0x7249, 0x7bef, 0x7bcf, 0x12a4};
+    const char *text = sFpsText;
+    int n = (int)strlen(text);
+    if (!n) return;
     static const float black[4] = {0, 0, 0, 1}, white[4] = {1, 1, 1, 1};
     source(0);
     opaque();
@@ -1391,8 +1452,11 @@ static void frame_job(void *arg) {
     C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
     C3D_AlphaTest(false, GPU_ALWAYS, 0);
     opaque();
+    fps_text(a->gameFrame);
+    int topSame = direct && top_unchanged(sLayers.topEngine, used[sLayers.topEngine], cpuBg[sLayers.topEngine]);
     for (int s = 0; s < 2 && sScreen[0]; s++) {
         int e = s == 0 ? sLayers.topEngine : 1 - sLayers.topEngine;
+        if (s == 0 && topSame) continue;  // (its target keeps the picture, shown again)
         float sw = s == 0 ? 400.0f : 320.0f;
         C3D_Tex *pic = &sComp[e];
         float pw = W, ph = H, size = TEX;
@@ -1416,7 +1480,7 @@ static void frame_job(void *arg) {
             C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
             C3D_AlphaTest(false, GPU_ALWAYS, 0);
             opaque();
-            if (s == 0) show_fps(a->gameFrame);
+            if (s == 0) show_fps();
             continue;
         }
         projection(sw, 240.0f, 1);
@@ -1430,7 +1494,7 @@ static void frame_job(void *arg) {
         const float uv[4][2] = {{0, 1}, {pw / size, 1}, {pw / size, 1 - ph / size}, {0, 1 - ph / size}};
         quad(xy, uv, 0);
         end();
-        if (s == 0) show_fps(a->gameFrame);
+        if (s == 0) show_fps();
     }
     GSPGPU_FlushDataCache(sV, (u32)sNV * sizeof(DVertex));
     frame_close();
