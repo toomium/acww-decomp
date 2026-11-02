@@ -367,10 +367,13 @@ every frame, or pictures interpolated between the game's (needs R1).
   covers the screen (the PC build's registers, frames 4115-4228 of the continue script). The margins showed the
   world through both. Now (pica_display.c) the wide 3D picture goes in the bottom screen's margins only where they
   show the 3D layer outside the windows and no BG of one opaque tile everywhere is in front of it (`margins_3d`);
-  else, as on the top screen, the 2D layers (margins2d), which now also draw the text BGs: with the windows on, or
-  of one tile everywhere (BgTex.uniform; "opaque": no transparent pixel in it). Azahar: the house's exit and the
+  else, as on the top screen, the 2D layers (margins2d), which now also draw the text BGs of one tile everywhere
+  (BgTex.uniform; "opaque": no transparent pixel in it; with any text BG the windows show outside instead, a menu's
+  BG would repeat into the margins; the iris's BG2 is of one tile, the narrower rule gives the same pictures). Azahar: the house's exit and the
   iris in town black to the screens' edges, the town and the sky as before. (3) `ACWW_WIDE` is on by default in
   the direct build (`ACWW_WIDE=0` off). Not done: the 2D UI (text boxes, the clock) stays in the DS's 256x192 in
   the middle (24 lines of world below the text box); OBJs and other text BGs aren't drawn in the margins; the speed
   on hardware (Azahar in town 46-47 game frames a second with the wide view; the old build's hardware numbers:
-  docs/3ds.md 2026-10-29).
+  docs/3ds.md 2026-10-29). Azahar, the same run in town (frames 4440-5040), `ACWW_WIDE=0` against on: 47-50
+  against 43-48 game frames a second, core 2's compositing 3.7 against 5.3 ms a frame, VRAM free 477 against 1338 KB
+  (the wide view keeps the layers' textures in linear memory); on hardware to be measured.

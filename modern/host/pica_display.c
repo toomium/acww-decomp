@@ -533,12 +533,11 @@ static int affine_wraps(const Gpu2dLineState *s, int l) {
     return l >= 2 && l < 4 && (s->gpuBg >> l & 1) && s->bgKind[l] == 2 && (s->bgcnt[l] & 0x2000);
 }
 static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s);
-// a BG the margins draw: the affine ones that wrap; the text BGs (they repeat) with the windows on or of one tile
-// everywhere: what the screen transitions show (an iris: a BG of black outside its window, then over everything)
+// a BG the margins draw: the affine ones that wrap; the text BGs of one tile everywhere (the same wherever they are
+// repeated): what the screen transitions show (an iris: a BG of black outside its window, then over everything)
 static int margin_bg(int e, const Gpu2dLineState *s, int l, int is3d, int windows) {
     if (affine_wraps(s, l)) return 1;
     if (l >= 4 || (l == 0 && is3d) || !(s->gpuBg >> l & 1) || s->bgKind[l] != 1) return 0;
-    if (windows) return 1;
     const BgTex *b = bg_texture(e, l, s);
     return b && b->uniform;
 }
