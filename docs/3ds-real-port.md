@@ -320,3 +320,20 @@ every frame, or pictures interpolated between the game's (needs R1).
   "Stereo" doesn't; (2) whether anything in the game waits on the sound in a way the real-time clock changes.
 - 2026-11-01: with the user's DSP firmware in Azahar's SD card (sdmc:/3ds/dspfirm.cdc): the sound's thread through
   ndsp, paced, to frame 3000: the DSP's queue never ran dry, the first big load (frame 183) included.
+- 2026-11-02: the user: on the New 3DS the title's music sounded too slow, as in slow motion (the DSP's queue never
+  ran dry). The title's music is a stream (NNS_SndArcStrmStart from SndMgr_PlayBgm; strm 0: IMA-ADPCM, 2 channels,
+  47605 Hz), whose buffer is the DS's 2 KB a channel: 4 blocks of 256 samples (5.4 ms each), each refilled by the
+  ARM9 from the ROM when the ARM7's alarm for it comes; with two loads still pending StrmDataCallback drops the older
+  one as silence, the stream's position not moving on. With the sound on its own thread the alarms reach the ARM9 at
+  its next event pass and the load waits on the game's virtual time: Azahar (with the DSP firmware), to frame 2400,
+  4840 of 8094 blocks dropped (the PC build: none). Changed in the direct build (heard on hardware: still to come): the stream buffers 16 times as large
+  (blocks of 86 ms, refilled within about 260 ms; SetupStrmPlayers, a static 768 KB, the sound heap's block kept for
+  the buffer's lifetime). The ADPCM decode buffer (0x200) is unchanged: each read stops at the file's block (512
+  bytes). Azahar: no block dropped; the title music (ACWW_WAV) against the PC build's: envelope correlation 0.998 at
+  speed ratio 1.00 (was 0.29 at 0.92), waveform 0.985. The ROM image is still held in memory (Azahar). Left: the load position (curSample, which the title's fade
+  reads: func_0210e648) is now about 340 ms ahead of what plays instead of 21 ms, and a stream that doesn't loop
+  ends about 350 ms after its last block instead of 20 ms; a hold-up of the game's thread longer than about 260 ms
+  still drops blocks. ACWW_FPS's sound line now gives the frames played a second (Azahar: 32500-33100, the DS's
+  32728). The log's thread starts at frame 600 (before: at the first frame), as the 10 s start may come from its SD
+  writes beside the start's ROM reads (**unverified**; Azahar doesn't show it); a crash before frame 600 loses the
+  start's lines.
