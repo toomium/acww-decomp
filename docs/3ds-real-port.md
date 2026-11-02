@@ -18,7 +18,7 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 | Subsystem | Now | What is still rebuilt | Cost | Next |
 |---|---|---|---|---|
 | 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4.5 (geometry 1.8, lighting 0.9, vertices 1.0); with the pictures between (D) core 2 about 5.9 (3D 1.9, vertices 1.6, lighting 1.0, VRAM 0.7) and the GPU 3.6-4.6 a frame | interpolation done (R6.3, D below); the textures in VRAM; the transform stays the CPU's (C1, the GPU's, not taken: the log 2026-11-02) |
-| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA, in the wide view straight onto the screens | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | core 0 1.3, core 2 1.1-1.5; the GPU's compositing 5.5 in town | the UI at the wide screen's edges (R5.3 B2 below) |
+| 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA, in the wide view straight onto the screens | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | core 0 1.3, core 2 1.1-1.5; the GPU's compositing 5.5 in town | B2 done (anchors); other screens' UI as found |
 | Sound | LLE, on a thread of its own (option A): the driver, sequencer, mixer and capture clocked by the sound it mixes, feeding the DSP itself | the SPU (16 channels mixed on the CPU), one stream to ndsp | core 2 (New 3DS), not core 0 | the user's listening test; ndsp channels (option B) later for the Old 3DS |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
 | Files, ROM, save | HLE (SDK): the save memory's stream commands (`CARDi_RequestStreamCommand`) and the ROM reads (`CARDi_ReadRom`, all of FS's) done at once in the host; the ROM image read ahead in the background | the save file written to the SD card on the game's thread (one write, 30 frames after the last change); the identify and the other card requests through the PXI | loads in Azahar still about 1.3 s at the first big one: ROM about 0.5 s (the read-ahead only runs while the game waits), "registers" about 0.55 s (**unverified**: the VRAM banks' remapping) | the load's register time; the save file's write in the background |
@@ -41,14 +41,13 @@ Open, in the order proposed to the user (the user picks):
    (Azahar draws none), the input latency (a game frame more). The 2D (the UI) is up to two frames ahead of the
    3D. What could come next (speed, the 4 s stand, the rest): the list (a)-(g) in the log's entry "the user's run
    with the cheaper top screen check"; proposed: the 3D's textures in VRAM, then the 4 s stand.
-2. **B2: R5.3, the UI at the wide screens' edges** (the user's first wish): the clock bottom right, the camera
-   button top right, the text box flush with the bottom. Done in screen_compose (pica_display.c) with anchors the
-   game gives under N3DS_DIRECT: `HudClock::draw` (src/main/unk_02089fbc.cpp) through `Oam_DrawCell`
-   (src/main/unk_02087e70.cpp; tag the OAM entries it allocates, latched with OAM in the 2D record), the
-   HudController's camera button (OBJs), the talk window's BG2 with its window 0 and its OBJs (TalkTextBox /
-   TalkWindowState, include/talk/; the code that sets BG2 and window 0 not found yet), ChoiceWindow with the text
-   box. Then the touch mapped back for what moved (frontend_3ds.c:163 maps the middle 256x192 only). Costs nothing
-   on the GPU.
+2. **B2: R5.3, the UI at the wide screens' edges: done** (the log, 2026-11-02, "anchors"): the HUD's panels
+   (clock, countdown, camera button, wallet) and HudProc's and MsgUiProc's icons (the green arrow, the input mode's
+   pencil) towards the edges they are near, the text box with its OBJs (arrow, choices) flush with the bottom, the
+   touch mapped back. Not looked at: the other screens' UI (menus, the map, the
+   shops), the top screen's. **Open (the user, 2026-11-02, hardware):** when saving, "Save" is only reached with
+   the touch put a bit lower than it shows - the save menu's choices and their touch boxes disagree (not fixed yet;
+   to look at: whether the choices are drawn moved while the touch goes by another box, or the other way round).
 3. Smaller, optional: texture VRAM's tracking from the written ranges (GX_LoadTex) instead of copying and comparing
    all 640 KB (g3_tex_setup on core 0, `track` on core 2) whenever a texture is uploaded; the sky's cloud BG as
    one-line quads (about 1.5-2 ms of the GPU): try the same quads ordered in 8-line blocks (the target's tile cache).
@@ -812,3 +811,55 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
   BG layers 124 -> 82 quads, "as it is" and marks 6 + 6 -> 0 + 2 quads; the ring 0.5 draws, 29 quads. Azahar's frames a
   second unchanged (core 0 bound there); on hardware to be measured. Not changed: the fades and the cut, the plain
   3DS and PC builds (all under N3DS_DIRECT).
+- 2026-11-02: R5.3 B2, the ways to the UI at the wide screens' edges weighed (the user: native, cheap on the
+  hardware, the original look). Found: the text box's BG2 and window 0 are TalkFrame's (src/main/unk_02065e88.cpp:
+  `TalkFrame_ShowBg`/`TalkFrame_HideBg`, the window's rect at lines 0x3c-0xc0, `TalkFrame::setScroll`); the clock's
+  OBJs go to OAM buffer A (`Oam_DrawCell` mode 0, `Oam_UseBufferA`: engine A, the bottom screen in town); every OBJ
+  of the game goes through the two buffers of src/main/unk_02087e70.cpp (`Oam_LoadBuffers`). The ways: (1) the game
+  made to think its screen is 320x240: not possible (OAM's y is 8 bits, unused OBJs hidden at y 192, the maps and
+  layouts 256 wide); (2) the compositor guessing elements by position or palette: breaks in menus and with OBJs
+  passing by; (3) the DS's picture cut in the middle and each half pushed out: tears the text box and the menus;
+  (4) anchors from the game, as the iris gives its progress: under N3DS_DIRECT the game says which OAM entries
+  (a side array of 128 tags beside each buffer, set in `Oam_DrawCell` from a "current anchor" the caller sets,
+  cleared with the buffers), which BG and window (TalkFrame) belong to an element and to which edges; latched with
+  the frame as `iris`; screen_compose adds the offset (from the screen's width: 32 / 72 sideways, 24 up or down) to
+  their quads. Same pixels, same quads: no GPU cost. To mind: anchored sprites clipped to the screen instead of
+  the DS's 256x192, and an element sliding out past line 192 then visible down to 216 (the clock's `slideY`); the
+  touch mapped back through the same anchors (frontend_3ds.c) for the camera button and the choices. Proposed
+  order: the clock (one caller, not touched), the text box (TalkFrame, flush with the bottom), then the camera
+  button and ChoiceWindow with the touch. Not found yet: the camera button's draw, the text box's OBJ callers.
+- 2026-11-02: R5.3 B2 done with anchors (the user: "mach mit ankern"). The game (N3DS_DIRECT, include/n3ds_ui.h) says
+  what belongs to a UI element and where: `Oam_Count` / `Oam_Anchor` tag the OAM entries drawn between them (a byte
+  beside each of the two OAM buffers, cleared by `Oam_ResetBuffers`, given with the buffers to `gpu2d_obj_anchors` in
+  `Oam_LoadBuffers`); `gpu2d_bg_anchor` names BGs and windows (TalkFrame_ShowBg / HideBg: BG2 and window 0), moved only on lines where
+  the BGs' BGxCNT are still those at the call (a menu opened during a talk, with its own BG2, isn't moved). The
+  anchor is edges (left, right, top, bottom) or "near" an id: the host takes the edges whose outer third of the DS's
+  screen the element's OBJs' box is in, each frame (the four HUD panels in `HudController::draw`, HudLinkIcon and
+  HudUnkIcon in `HudProc::onDraw`, `MsgUiProc::onDraw`'s InputModeIcon: their places weren't all known; not
+  HudUnkSlideIcon, drawn at slideOffset + 0x80: sliding sideways round the middle it could jump from one edge's
+  decision to the other's; not seen yet). The speaker's name is BG2's too (its label's tiles go to BG2's characters,
+  MsgTextLabel's default vramLoader 2). The green arrow at the
+  top right in town is not the camera button (HudCameraButton is the rooms' furniture grid, not shown in town) but
+  one of HudProc's icons, drawn at (128, 96) with its place in its cell: `HudUnkIcon` (the PC build's callers of
+  `Oam_DrawCell`; which of the three **unverified**). gpu2d.c latches them with the frame (as `iris`); an OAM entry keeps its anchor only while it holds the
+  6 bytes it was given with (OAM loaded another way, e.g. NNS's, gets none). pica_display.c (screen_compose) adds the
+  margins' width (32 or 72 sideways, 24 up or down) to the anchored sprites', text BGs' and windows' quads, after
+  clipping them to the DS's 256x192 as before: an element sliding out of the DS's screen leaves the 3DS's at its edge.
+  The touch: the bottom screen's moved boxes (the anchored OBJs' per anchor, the anchored windows' lines) with their
+  moves, published by the GPU thread; `pdisp_touch_map` (frontend_3ds.c) maps a touch on a moved element back
+  (shortcut: not locked; a touch may go by the frame before's boxes). Same quads as before: no GPU cost. Checked
+  (Azahar, the continue script on wide.sav, `ACWW_RTC` fixed, `ACWW_PICA_SHOT` every 50 frames 2200-5200): the title's
+  text box and its choices, the house's text boxes ("Preparing", the spinning icon, the arrow; the text is BG2's)
+  flush with the bottom screen's bottom; in town the clock in the bottom right corner (sliding in from below), the
+  green arrow in the top right one; the iris and the rest as before. The touch (Azahar, a click with xdotool on the
+  arrow's new place, beyond the DS's 256x192): the game switches to the touch mode as the PC build does for a touch on
+  the arrow's DS place (the pencil icon, now in the top left corner; the player turns; the clock hides and comes
+  back). The same with the BGxCNT check (the text boxes still moved). The PC build's code unchanged: the four game
+  files' code and data the HEAD's (tools/host_objcmp.sh, 32 and 64 bits), gpu2d.c and gpu2d_obj.c preprocessed
+  without N3DS_DIRECT the same, pica_display.c only a stub more; the plain 3DS build: pica_display.c's sprites and
+  windows add a 0 to their positions (the same values; its pictures not compared). Not checked: the wallet, the
+  countdown, HudLinkIcon (their places), a named villager's talk, other screens' UI, the order of groups (a sprite moved onto lines of a
+  later group of other GPU state would be drawn over by that group's backdrop: one group in town and in the text
+  box's scenes), the speed on hardware (the same quads, so no GPU cost expected: `ACWW_FPS=1` to measure).
+- 2026-11-02: the user's run on hardware: when saving, the touch has to be put a bit lower than "Save" shows to
+  reach it (B2's touch mapping and the save menu's choices disagree). Written down only, not fixed (the user's wish).
