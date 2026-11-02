@@ -39,8 +39,8 @@ Open, in the order proposed to the user (the user picks):
 1. **D: R6.3, the 3D's pictures between the game's: done** (on by default, `ACWW_PICA_INTERP=0` off; the log,
    2026-11-02). Not looked at yet: a picture between across a cut (D4), the objects' shadows while walking
    (Azahar draws none), the input latency (a game frame more). The 2D (the UI) is up to two frames ahead of the
-   3D. For more speed, see the list in the log's last entry: the 3D's textures in VRAM, the compositing's commands,
-   the replay, the 3D's command list recorded once per list.
+   3D. What could come next (speed, the 4 s stand, the rest): the list (a)-(g) in the log's entry "the user's run
+   with the cheaper top screen check"; proposed: the 3D's textures in VRAM, then the 4 s stand.
 2. **B2: R5.3, the UI at the wide screens' edges** (the user's first wish): the clock bottom right, the camera
    button top right, the text box flush with the bottom. Done in screen_compose (pica_display.c) with anchors the
    game gives under N3DS_DIRECT: `HudClock::draw` (src/main/unk_02089fbc.cpp) through `Oam_DrawCell`
@@ -792,5 +792,7 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
       2's 3D in 2 frames of 3; own command buffers beside citro3d's);
   (e) the GPU's compositing: the BG layers in VRAM where they fit (the wide view keeps them in the main memory);
   (f) the 4 s stand near frame 1000 with "pxi7: receive FIFO overflow" (seen in 4 of 6 runs, a bug of its own);
-  (g) the D items not looked at: a cut, the shadows, the latency; B2 (the UI at the wide screens' edges).
+  (g) the D items not looked at: a cut, the shadows, the latency; B2 (the UI at the wide screens' edges); R6.1
+      (controls), R6.2 (languages), R5.2 (stereoscopic 3D).
+  Proposed to the user: (a) first (the largest gain expected where town is full), then (f).
 
