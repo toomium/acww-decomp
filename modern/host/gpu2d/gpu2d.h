@@ -59,8 +59,19 @@ typedef struct Gpu2dSprite {
     uint16_t u, v;  // its pixels in the atlas
     uint8_t prio;
     uint8_t window;  // 1: an OBJ-window OBJ (it shapes the OBJ window, isn't shown)
+#ifdef N3DS_DIRECT
+    uint8_t anchor;  // the UI element it belongs to (gpu2d_obj_anchors; 0 none)
+#endif
 } Gpu2dSprite;
 #ifdef N3DS_DIRECT
+// The enhanced port's UI at the wide screens' edges (docs/3ds-real-port.md R5.3): an element's anchor, the edges the
+// host moves it to (by the margins' width), or GPU2D_NEAR | id << 5 (id 0-7): towards the edges its OBJs (those with
+// that anchor) are in the outer third of
+enum { GPU2D_LEFT = 1, GPU2D_RIGHT = 2, GPU2D_TOP = 4, GPU2D_BOTTOM = 8, GPU2D_NEAR = 0x10 };
+typedef struct Gpu2dBgAnchor {
+    uint8_t bgs, windows, anchor;  // the BGs (bit n: BGn) and windows (bit w: window w) moved, and where
+    uint16_t bgcnt[4];             // the BGs' BGxCNT when given: moved only on lines where they are the same
+} Gpu2dBgAnchor;
 // The enhanced port's wide view (docs/3ds-real-port.md R5.3): an affine BG whose parameters the game changes line by
 // line (the sky's clouds) on the lines beyond the DS's screen, as the game would set them there (gpu2d_margin_affine):
 // lines -GPU2D_MARGIN to -1, then 192 to 191 + GPU2D_MARGIN; PA and the reference point (PB, PC, PD as at the edge line)
@@ -91,6 +102,7 @@ typedef struct Gpu2dLayers {
 #ifdef N3DS_DIRECT
     Gpu2dMarginAffine margin[2];  // per engine, for this frame
     int iris;                     // the screen transitions' iris (gpu2d_iris) for this frame
+    Gpu2dBgAnchor bgAnchor[2];    // per engine (gpu2d_bg_anchor), for this frame
 #endif
 } Gpu2dLayers;
 
@@ -138,6 +150,12 @@ void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_
 // the screen transitions' iris, drawn by the host over both whole screens: 0 open to 0x1000 closed, -1 none; given by
 // the game at its V-blank, from the next frame on
 void gpu2d_iris(int progress);
+// the UI elements' anchors (Gpu2dSprite.anchor): one for each of an engine's 128 OAM entries, given with the OAM the game
+// loads (0x400 bytes) at its V-blank; an entry keeps its anchor while OAM holds what it held then
+void gpu2d_obj_anchors(int engine, const void *oam, const uint8_t *anchors);
+// BGs and windows that make a UI element with the OBJs of the same anchor (Gpu2dBgAnchor); given by the game when it
+// shows them (their BGxCNT set up), from the next frame on, kept until changed (bgs 0: none)
+void gpu2d_bg_anchor(int engine, int bgs, int windows, int anchor);
 #endif
 // screen 0 top, 1 bottom (POWCNT1 bit 15 decides which engine shows where): 256x192 pixels, 0xffRRGGBB
 const uint32_t *gpu2d_screen(int screen);

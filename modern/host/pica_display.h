@@ -11,6 +11,9 @@ struct Gpu2dLayers;
 int pdisp_init(void);                     // 0 if this build or the GPU can't (then the CPU composites)
 void pdisp_attach_screens(void);          // (the frontend, once the 3DS's screens are set up: show on them)
 int pdisp_scaled(void);                   // the screens shown 1.25 times (320x240), else 1:1
+// a touch on the bottom screen at (x, y) of the DS's screen in its middle: moved to where it is on the DS's screen if it
+// is on a UI element moved to the wide screen's edges (the direct build, docs/3ds-real-port.md R5.3)
+void pdisp_touch_map(int *x, int *y);
 struct Gpu2dLayers *pdisp_layers(void);   // where the 2D renderer puts this frame's layers
 // a frame: the layers the 2D renderer made and the 3D picture: a texture the GPU drew (gpu3d.h gpu3d_pica_picture,
 // premultiplied alpha), else picture3d (gpu3d_lines' format; NULL: none)

@@ -728,6 +728,8 @@ typedef struct {
 #ifdef N3DS_DIRECT
     Gpu2dMarginAffine margin[2];
     int iris;
+    u8 objAnchor[2][128];
+    Gpu2dBgAnchor bgAnchor[2];
 #endif
 } Record;
 static Record sRecord[2];
@@ -747,6 +749,22 @@ void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_
 }
 static int sIris = -1;  // (kept until changed)
 void gpu2d_iris(int progress) { sIris = progress; }
+static u8 sObjAnchor[2][128], sObjAnchorOam[2][128][6];  // (each entry's anchor, and what it was given for)
+static Gpu2dBgAnchor sBgAnchor[2];
+void gpu2d_obj_anchors(int engine, const void *oam, const uint8_t *anchors) {
+    if (engine < 0 || engine > 1) return;
+    memcpy(sObjAnchor[engine], anchors, 128);
+    for (int i = 0; i < 128; i++) memcpy(sObjAnchorOam[engine][i], (const u8 *)oam + 8 * i, 6);
+}
+void gpu2d_bg_anchor(int engine, int bgs, int windows, int anchor) {
+    if (engine < 0 || engine > 1) return;
+    Gpu2dBgAnchor *a = &sBgAnchor[engine];
+    *a = (Gpu2dBgAnchor){(u8)bgs, (u8)windows, (u8)(bgs ? anchor : 0), {0}};
+    for (int n = 0; n < 4; n++) {  // (another screen's BG with these numbers isn't moved: a menu opened meanwhile)
+        u32 v = gpu2d_read32(0x04000008u + 0x1000u * (u32)engine + 4u * (u32)(n / 2));
+        a->bgcnt[n] = (u16)(n & 1 ? v >> 16 : v);
+    }
+}
 #endif
 static void record_start(const Gpu2dFrameInput *in) {
     Record *r = &sRecord[sRecording ^= 1];
@@ -754,6 +772,11 @@ static void record_start(const Gpu2dFrameInput *in) {
     memcpy(r->margin, sMargin, sizeof r->margin);
     sMargin[0].bg = sMargin[1].bg = 0;
     r->iris = sIris;
+    // (an anchor only for an entry still as the game gave it: OAM loaded another way gets none)
+    for (int n = 0; n < 2; n++)
+        for (int i = 0; i < 128; i++)
+            r->objAnchor[n][i] = sObjAnchor[n][i] && !memcmp(sObjAnchorOam[n][i], in->oam + 0x400 * n + 8 * i, 6) ? sObjAnchor[n][i] : 0;
+    memcpy(r->bgAnchor, sBgAnchor, sizeof r->bgAnchor);
 #endif
     memcpy(sShadow, in->palette, 0x800);
     memcpy(sShadow + 0x200, in->oam, 0x800);
@@ -847,6 +870,8 @@ void gpu2d_draw_layers(int record) {
 #ifdef N3DS_DIRECT
     memcpy(sLayers->margin, r->margin, sizeof sLayers->margin);
     sLayers->iris = r->iris;
+    memcpy(sLayers->bgAnchor, r->bgAnchor, sizeof sLayers->bgAnchor);
+    for (int n = 0; n < 2; n++) draw[n].objAnchor = r->objAnchor[n];
 #endif
     int ax = 0, ay = 0, rowH = 0;  // (the sprite atlas, filled at line 0)
     for (int line = 0; line < SCREEN_H; line++) {

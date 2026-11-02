@@ -65,6 +65,9 @@ typedef struct Engine {
     const u8 *objExtPal;       // the 8 KB extended OBJ palette (NULL: not mapped)
     const u8 *palette;         // 0x400 bytes: BG palette, then OBJ palette
     const u8 *oam;             // 0x400 bytes
+#ifdef N3DS_DIRECT
+    const u8 *objAnchor;       // each OAM entry's anchor (gpu2d_obj_anchors) for this frame
+#endif
     // the affine BGs' internal reference points (BG2, BG3) for line refLine: from BGxX/BGxY at the frame's start,
     // then each line adds PB/PD, and a write to BGxX / BGxY (bit 0 / 1 of refWritten[i], an H-blank effect) reloads it
     s32 refX[2], refY[2];

@@ -182,6 +182,9 @@ int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int 
         Gpu2dSprite *s = &out[n++];
         s->x = (int16_t)x0, s->y = (int16_t)y0, s->w = (uint16_t)bw, s->h = (uint16_t)bh;
         s->u = (uint16_t)*ax, s->v = (uint16_t)*ay, s->prio = (uint8_t)(a2 >> 10 & 3), s->window = mode == 2;
+#ifdef N3DS_DIRECT
+        s->anchor = e->objAnchor ? e->objAnchor[i] : 0;
+#endif
         if (!affine && mode != 3 && !((a0 & 0x2000) && (dispcnt & 1u << 31))) {
             sprite_tiles(e, dispcnt, a0, a1, a2, w, h, pal, atlas + *ay * GPU2D_ATLAS_W + *ax);
             *ax += bw;

@@ -37,6 +37,7 @@ void pdisp_wait(int kind, int older) { (void)kind, (void)older; }
 void pdisp_idle(void) {}
 void pdisp_gsp_init(void) {}
 void pdisp_quit(void) {}
+void pdisp_touch_map(int *x, int *y) { (void)x, (void)y; }
 
 #else
 
@@ -700,6 +701,25 @@ static int sScreenMode;
 #else
 enum { sScreenMode = 0 };
 #endif
+#ifdef N3DS_DIRECT
+// R5.3, the UI the game anchors (gpu2d.h: Gpu2dSprite.anchor, Gpu2dBgAnchor) at the wide screen's edges: the same
+// quads moved by the margins' width (sAx, sAy: the DS's picture's place on the screen in screen_compose, else 0). An
+// element is clipped to the DS's 256x192 before it is moved, as on a DS: sliding out of that it leaves the screen.
+static float sAx, sAy;
+static u8 sNear[8];  // (GPU2D_NEAR | id << 5: the edges element id is near, this engine and frame: anchors_setup)
+static void anchor_shift(int a, float *dx, float *dy) {
+    if (a & GPU2D_NEAR) a = sNear[a >> 5 & 7];
+    *dx = a & GPU2D_LEFT ? -sAx : a & GPU2D_RIGHT ? sAx : 0;
+    *dy = a & GPU2D_TOP ? -sAy : a & GPU2D_BOTTOM ? sAy : 0;
+}
+// a line where engine e's anchored BGs and windows are moved: the BGs still as the game gave them (Gpu2dBgAnchor.bgcnt)
+static int bg_anchored(int e, const Gpu2dLineState *s) {
+    const Gpu2dBgAnchor *a = &sLayers.bgAnchor[e];
+    for (int n = 0; n < 4; n++)
+        if ((a->bgs >> n & 1) && s->bgcnt[n] != a->bgcnt[n]) return 0;
+    return a->bgs != 0;
+}
+#endif
 static float piece_y0(const Group *g, int i) { return g->y0[i] == 0 ? 0.0f - sY : (float)g->y0[i]; }
 static float piece_y1(const Group *g, int i) { return g->y1[i] == H ? H + sY : (float)g->y1[i]; }
 // (group: the passes a margin layer can leave out - everything under it is a 2nd target the effects are allowed
@@ -765,10 +785,13 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
     // (screen_compose: beyond the DS's screen only the BGs the margins draw)
     int out = sMargin || (sScreenMode && margin_bg(g->engine, s, l, is3d, 0));
     if (b->kind == 1) {  // text: scrolled (the margins: on beyond the screen's edges, as it repeats)
-        float x0 = out ? sX0 : 0, x1 = out ? sX1 : W;
+        float x0 = out ? sX0 : 0, x1 = out ? sX1 : W, dx = 0, dy = 0;
         float u0 = (s->bghofs[l] + x0) / b->w, u1 = (s->bghofs[l] + x1) / b->w;
         if (out) y0 = piece_y0(g, i), y1 = piece_y1(g, i);
-        rect(x0, y0, x1, y1, u0, u1, (float)s->bgvofs[l] + y0, (float)b->h, 0);
+#ifdef N3DS_DIRECT
+        else if ((sLayers.bgAnchor[g->engine].bgs >> l & 1) && bg_anchored(g->engine, s)) anchor_shift(sLayers.bgAnchor[g->engine].anchor, &dx, &dy);
+#endif
+        rect(x0 + dx, y0 + dy, x1 + dx, y1 + dy, u0, u1, (float)s->bgvofs[l] + y0, (float)b->h, 0);
         return;
     }
     const int16_t *a = s->affine[l - 2];
@@ -797,8 +820,12 @@ static int sObjPrio;
 static void sprite_rect(const Gpu2dSprite *s, int y0, int y1) {
     int x0 = s->x, x1 = s->x + s->w;
     if (sScreenMode) x0 = x0 < 0 ? 0 : x0, x1 = x1 > W ? W : x1;
+    float dx = 0, dy = 0;
+#ifdef N3DS_DIRECT
+    anchor_shift(s->anchor, &dx, &dy);
+#endif
     if (x1 > x0)
-        rect((float)x0, (float)y0, (float)x1, (float)y1, (float)(s->u + x0 - s->x) / GPU2D_ATLAS_W,
+        rect((float)x0 + dx, (float)y0 + dy, (float)x1 + dx, (float)y1 + dy, (float)(s->u + x0 - s->x) / GPU2D_ATLAS_W,
              (float)(s->u + x1 - s->x) / GPU2D_ATLAS_W, (float)(s->v + y0 - s->y), GPU2D_ATLAS_H, 0);
 }
 // the sprites of priority sObjPrio in the group's pieces: the later in OAM first, so that the earlier is in front
@@ -970,8 +997,13 @@ static void group(const Group *g) {
                 const Gpu2dLineState *ps = piece_state(g, i);
                 float x1 = (float)(ps->winh[w] >> 8), x2 = (float)(ps->winh[w] & 0xff), y0 = (float)g->y0[i], y1 = (float)g->y1[i];
                 if (!(ps->winV >> w & 1)) continue;
+                float dx = 0, dy = 0;
+#ifdef N3DS_DIRECT
+                if ((sLayers.bgAnchor[g->engine].windows >> w & 1) && bg_anchored(g->engine, ps)) anchor_shift(sLayers.bgAnchor[g->engine].anchor, &dx, &dy);
+#endif
+                x1 += dx, x2 += dx, y0 += dy, y1 += dy;
                 if (x1 < x2) rect(x1, y0, x2, y1, 0, 0, 0, TEX, 0);
-                else if (x1 > x2) rect(0, y0, x2, y1, 0, 0, 0, TEX, 0), rect(x1, y0, W, y1, 0, 0, 0, TEX, 0);
+                else if (x1 > x2) rect(dx, y0, x2, y1, 0, 0, 0, TEX, 0), rect(x1, y0, W + dx, y1, 0, 0, 0, TEX, 0);
             }
             end();
         }
@@ -1165,6 +1197,78 @@ static void margins2d(int e, float x0, float y0, float sw) {
     projection(sw, 240.0f, 1);
 }
 
+#ifdef N3DS_DIRECT
+// R5.3: the anchored UI's place this frame on engine e's screen (the DS's picture at x0, y0): the edges each
+// GPU2D_NEAR element is near (its OBJs' box's middle in the outer third of the DS's screen), and, for the touch
+// (pdisp_touch_map), each moved element's box on the DS's screen with its move
+typedef struct { int16_t x0, y0, x1, y1, dx, dy; } TouchMove;
+enum { TOUCH_MOVES = 16 };
+static TouchMove sMoves[TOUCH_MOVES], sTouch[TOUCH_MOVES];
+static int sNMoves;
+static volatile int sNTouch;
+static void anchors_setup(int e, float x0, float y0) {
+    static int box[256][4];  // (per anchor: its OBJs' box, x0 y0 x1 y1, on the DS's screen)
+    for (int a = 0; a < 256; a++) box[a][0] = W, box[a][1] = H, box[a][2] = box[a][3] = 0;
+    for (int k = 0; k < sLayers.nsprites[e]; k++) {
+        const Gpu2dSprite *t = &sLayers.sprites[e][k];
+        int *b = box[t->anchor], a0 = t->x < 0 ? 0 : t->x, a1 = t->x + t->w > W ? W : t->x + t->w;
+        int b0 = t->y < 0 ? 0 : t->y, b1 = t->y + t->h > H ? H : t->y + t->h;
+        if (!t->anchor || t->window || a1 <= a0 || b1 <= b0) continue;
+        if (a0 < b[0]) b[0] = a0;
+        if (b0 < b[1]) b[1] = b0;
+        if (a1 > b[2]) b[2] = a1;
+        if (b1 > b[3]) b[3] = b1;
+    }
+    for (int id = 0; id < 8; id++) {
+        const int *b = box[GPU2D_NEAR | id << 5];
+        int cx = b[0] + b[2], cy = b[1] + b[3];  // (twice the middle)
+        sNear[id] = b[2] <= b[0] ? 0
+                  : (u8)((cx < 2 * W / 3 ? GPU2D_LEFT : cx > 4 * W / 3 ? GPU2D_RIGHT : 0) |
+                         (cy < 2 * H / 3 ? GPU2D_TOP : cy > 4 * H / 3 ? GPU2D_BOTTOM : 0));
+    }
+    sAx = x0, sAy = y0, sNMoves = 0;
+    float dx, dy;
+    for (int a = 1; a < 256 && sNMoves < TOUCH_MOVES; a++) {
+        anchor_shift(a, &dx, &dy);
+        if (box[a][2] > box[a][0] && (dx || dy))
+            sMoves[sNMoves++] = (TouchMove){(int16_t)box[a][0], (int16_t)box[a][1], (int16_t)box[a][2], (int16_t)box[a][3], (int16_t)dx, (int16_t)dy};
+    }
+    // (an anchored BG: the box of its windows' lines)
+    const Gpu2dBgAnchor *ba = &sLayers.bgAnchor[e];
+    anchor_shift(ba->anchor, &dx, &dy);
+    int bx0 = W, by0 = H, bx1 = 0, by1 = 0;
+    for (int y = 0; ba->bgs && ba->windows && (dx || dy) && y < H; y++)
+        for (int w = 0; w < 2; w++) {
+            const Gpu2dLineState *ls = &sLayers.line[e][y];
+            if (!(ba->windows >> w & 1) || !(ls->dispcnt & 0x2000u << w) || !(ls->winV >> w & 1) || !bg_anchored(e, ls)) continue;
+            int a0 = ls->winh[w] >> 8, a1 = ls->winh[w] & 0xff;
+            if (a1 <= a0) a0 = 0, a1 = W;
+            bx0 = a0 < bx0 ? a0 : bx0, bx1 = a1 > bx1 ? a1 : bx1, by0 = y < by0 ? y : by0, by1 = y + 1;
+        }
+    if (bx1 > bx0 && sNMoves < TOUCH_MOVES)
+        sMoves[sNMoves++] = (TouchMove){(int16_t)bx0, (int16_t)by0, (int16_t)bx1, (int16_t)by1, (int16_t)dx, (int16_t)dy};
+}
+// (the bottom screen's moves for the frontend's thread; shortcut: not locked - a touch while they change may go by
+// the frame before's, which hardly differ)
+static void touch_publish(int on) {
+    sNTouch = 0;
+    if (!on) return;
+    memcpy(sTouch, sMoves, sizeof sMoves);
+    sNTouch = sNMoves;
+}
+#endif
+void pdisp_touch_map(int *x, int *y) {
+#ifdef N3DS_DIRECT
+    for (int i = 0, n = sNTouch; i < n; i++) {
+        const TouchMove *m = &sTouch[i];
+        int sx = *x - m->dx, sy = *y - m->dy;
+        if (sx >= m->x0 && sx < m->x1 && sy >= m->y0 && sy < m->y1) { *x = sx, *y = sy; return; }
+    }
+#else
+    (void)x, (void)y;
+#endif
+}
+
 // The direct build's wide view: engine e straight onto the screen being drawn (sw wide, with a stencil buffer), the
 // DS's picture at (x0, y0) - no picture of the engine first, no copy, no margins drawn apart (sScreenMode)
 static void screen_compose(int e, float x0, float y0, float sw) {
@@ -1173,9 +1277,10 @@ static void screen_compose(int e, float x0, float y0, float sw) {
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, sUProjection, &m);
 #ifdef N3DS_DIRECT
     sScreenMode = 1, sX0 = -x0, sX1 = sw - x0, sY = y0;
+    anchors_setup(e, x0, y0);
     colour_writes(1);
     compose(e);
-    sScreenMode = 0, sX0 = 0, sX1 = W, sY = 0;
+    sScreenMode = 0, sX0 = 0, sX1 = W, sY = 0, sAx = sAy = 0;
 #endif
     projection(sw, 240.0f, 1);
 }
@@ -1208,6 +1313,7 @@ static int top_unchanged(int e, u32 used, u32 cpuBg) {
 #ifdef N3DS_DIRECT
     h = hash32(h, &L->margin[e], sizeof L->margin[e]);
     h = hash32(h, &L->iris, sizeof L->iris);
+    h = hash32(h, &L->bgAnchor[e], sizeof L->bgAnchor[e]);
 #endif
     // (as layer_bind would at the first group showing it: the same state, so the same texture)
     u32 drawnBefore = sBgDrawn, seen = 0;
@@ -1468,6 +1574,9 @@ static void frame_job(void *arg) {
     const int direct = 0;
 #endif
     sDirectFrame = direct;
+#ifdef N3DS_DIRECT
+    if (!direct) touch_publish(0);
+#endif
     for (int e = 0; e < 2 && !direct; e++) {
         C3D_RenderTargetClear(sCompTarget[e], C3D_CLEAR_ALL, 0, 0);
         C3D_FrameDrawOn(sCompTarget[e]);
@@ -1506,6 +1615,9 @@ static void frame_job(void *arg) {
         C3D_FrameDrawOn(sScreen[s]);
         if (direct) {
             screen_compose(e, x0, y0, sw);
+#ifdef N3DS_DIRECT
+            if (s == 1) touch_publish(1);
+#endif
             C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
             C3D_AlphaTest(false, GPU_ALWAYS, 0);
             opaque();
