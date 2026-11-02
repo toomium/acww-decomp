@@ -131,12 +131,30 @@ static u32 texture_version(u32 tp, u32 tpal) {
 }
 
 // row-major RGBA8 into the GPU's layout: 8x8 tiles, row by row, the texels in a tile in Morton (Z) order
-static void tile(const u32 *src, u32 *dst, int w, int h) {
+// (half16: as RGBA5551, the DS's 5-bit colours and a 1-bit alpha exactly: half the GPU's reads of a texel)
+static void tile(const u32 *src, void *dst, int w, int h, int half16) {
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             int m = (x & 1) | (y & 1) << 1 | (x & 2) << 1 | (y & 2) << 2 | (x & 4) << 2 | (y & 4) << 3;
-            dst[((y >> 3) * (w >> 3) + (x >> 3)) * 64 + m] = src[y * w + x];
+            int i = ((y >> 3) * (w >> 3) + (x >> 3)) * 64 + m;
+            u32 c = src[y * w + x];
+            if (half16)
+                ((u16 *)dst)[i] = (u16)((c >> 27) << 11 | (c >> 19 & 31) << 6 | (c >> 11 & 31) << 1 | (c >> 7 & 1));
+            else ((u32 *)dst)[i] = c;
         }
+}
+
+// the formats with a 1-bit alpha at most (all but A3I5 and A5I3): as RGBA5551, exact (g3_texture_rgba's 8 bits are a
+// 5-bit value repeated); the direct build, ACWW_PICA_TEX16=0: all RGBA8, as before
+static int half16(u32 tp) {
+    static int on = -1;
+#ifdef N3DS_DIRECT
+    if (on < 0) on = !getenv("ACWW_PICA_TEX16") || atoi(getenv("ACWW_PICA_TEX16"));
+#else
+    on = 0;  // (the 3DS build as it was)
+#endif
+    int fmt = tp >> 26 & 7;
+    return on && fmt != 1 && fmt != 6;
 }
 
 static C3D_Tex *texture(u32 tp, u32 tpal) {
@@ -170,14 +188,14 @@ static C3D_Tex *texture(u32 tp, u32 tpal) {
         e = lru;
         if (e->live) C3D_TexDelete(&e->tex);
         e->live = 0;
-        if (!C3D_TexInit(&e->tex, (u16)w, (u16)h, GPU_RGBA8)) return 0;
+        if (!C3D_TexInit(&e->tex, (u16)w, (u16)h, half16(tp) ? GPU_RGBA5551 : GPU_RGBA8)) return 0;
         C3D_TexSetFilter(&e->tex, GPU_NEAREST, GPU_NEAREST);
         e->live = 1, e->key = key, e->pal = pal;
     }
     u32 *rgba = malloc((size_t)w * h * 4);
     if (!rgba) return 0;
     g3_texture_rgba(tp, tpal, rgba);
-    tile(rgba, e->tex.data, w, h);
+    tile(rgba, e->tex.data, w, h, half16(tp));
     free(rgba);
     C3D_TexFlush(&e->tex);
     if (is4x4) {
@@ -670,6 +688,14 @@ void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texCha
 static void render(const G3RenderState *r, void *vertices, u32 *color, u32 *depth, u8 *flags) {
     HOST_PROF_ON(gPicaProf, PROF_3D);
     sFrame++;
+    static int stats = -1;  // ACWW_PICA_STATS=1: the textures the 3D used in the last 300 pictures, every 300
+    if (stats < 0) stats = getenv("ACWW_PICA_STATS") && atoi(getenv("ACWW_PICA_STATS"));
+    if (stats && sFrame % 300 == 0) {
+        u32 n = 0, bytes = 0;
+        for (int i = 0; i < NTEX; i++)
+            if (sTex[i].live && sFrame - sTex[i].used < 300) n++, bytes += (u32)sTex[i].tex.size;
+        fprintf(stderr, "pica: the 3D's textures: %lu in use, %lu KB\n", (unsigned long)n, (unsigned long)(bytes / 1024));
+    }
     // for the GPU's compositing (color NULL): into the next texture, nothing read back; the fog only "alpha only"
     // (the caller sends the colour fog here: gpu3d_raster.c), worked into the polygons' alpha at their vertices (with
     // a fog alpha of 0 exactly the DS's: the density then scales the alpha)
