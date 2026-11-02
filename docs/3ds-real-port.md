@@ -17,7 +17,7 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 
 | Subsystem | Now | What is still rebuilt | Cost | Next |
 |---|---|---|---|---|
-| 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4.5 (geometry 1.8, lighting 0.9, vertices 1.0), core 2 about 1.5-1.9, GPU 1.6-1.9 (the wide picture) | interpolation (R6.3, D below); the transform stays the CPU's (C1, the GPU's, not taken: the log 2026-11-02) |
+| 3D | HLE (commands), on the PICA | matrices and lighting in the DS's fixed point on the CPU (the game reads the matrices) | core 0 about 4.5 (geometry 1.8, lighting 0.9, vertices 1.0); with the pictures between (D) core 2 about 5.9 (3D 1.9, vertices 1.6, lighting 1.0, VRAM 0.7) and the GPU 3.6-4.6 a frame | interpolation done (R6.3, D below); the textures in VRAM; the transform stays the CPU's (C1, the GPU's, not taken: the log 2026-11-02) |
 | 2D | HLE (commands) for the OBJs (sprites from OAM, decoded once a frame) and the windows (shapes into the stencil); the BGs from VRAM as tile textures; all drawn on the PICA, in the wide view straight onto the screens | the per-line record on core 0 (the registers each line, the sky's backdrop colours; the 2D banks F-I, about 80 KB, copied each frame) | core 0 1.3, core 2 1.1-1.5; the GPU's compositing 5.5 in town | the UI at the wide screen's edges (R5.3 B2 below) |
 | Sound | LLE, on a thread of its own (option A): the driver, sequencer, mixer and capture clocked by the sound it mixes, feeding the DSP itself | the SPU (16 channels mixed on the CPU), one stream to ndsp | core 2 (New 3DS), not core 0 | the user's listening test; ndsp channels (option B) later for the Old 3DS |
 | Registers, interrupts, DMA, virtual time | LLE | every register access of the SDK through the hardware model | core 0 about 2 | R3 |
@@ -28,25 +28,19 @@ hardware rebuilt beneath the game; "HLE (commands)": the hardware unit's input (
 
 ## Next steps (2026-11-02; details in the log, section 5)
 
-Where it stands (a New 3DS, the wide view, town): 59.8 game frames a second throughout; the GPU's compositing 5.5
-ms a composited frame (was 9.5-10.8 before R5.3 B1); no 45 ms frames any more (f5d11fc3). What is left a frame: the
-GPU about 9 ms, core 0 about 6-7 ms (pacing), core 2 about 6.7 ms (idle). The slowest frame of each 120 (37-39 ms)
-is the game's own work every third frame (game, registers, geometry, lighting, vertices: 20-25 ms).
+Where it stands (a New 3DS, the wide view, town, 2026-11-02): the 3D at 60 pictures a second by interpolation
+(D), 42-67 game frames a second, median 58.4, long stretches at 59-61, the fuller parts of town (more villagers)
+at 52-57. A frame: core 2 (the GPU thread) about 10.6 ms of its own work (2D 1.1, 3D 1.9, vertices 1.6, lighting
+1.0, VRAM 0.7, compositing 3.2, BG tiles 0.7, top hash 0.2, frame end 0.2) and 4.6 waiting for the GPU; the
+GPU's 3D 3.6-4.6 ms a picture, its compositing about 8-9 (less where the top screen is skipped); core 0 waits for
+core 2 about 6.4. Both core 2 and the GPU are near the limit.
 
 Open, in the order proposed to the user (the user picks):
-1. **D: R6.3, 60 3D pictures a second by interpolation, on the CPU.** The game's whole loop runs at 20 Hz
-   (`gVBlanksPerFrame = 3`: BootLogoScene::onCreate, FieldScene::stepFinish), so more 3D pictures only come from
-   pictures between two game frames. The transform on the CPU (exact, about 3 ms a 3D picture on hardware) is
-   cheap enough for the in-between pictures; C1 (the GPU's transform, branch `c1-gpu-transform`) saved nothing and
-   flickered on hardware. Steps:
-   - D1: record each 3D picture's polygons in object coordinates with their clip matrix's id and the matrices in the
-     order made (C1's recording, without its shader); drawn through the CPU's transform as now.
-   - D2: the camera only, as a test of the feel: the last game frame's scene again with a camera between two game
-     frames. Costs: up to a game frame (33-50 ms) more input latency; core 0 about +2 ms a frame; the GPU's 3D three
-     times as often (about 11 of 16.7 ms then).
-   - D3: objects and characters too: the matrices of two game frames paired (the risk: whether that pairing holds;
-     the clip matrix changes 150-470 times a picture, about half of them inside polygons: skinning).
-   - D4: no interpolation across scene changes, warps, camera cuts.
+1. **D: R6.3, the 3D's pictures between the game's: done** (on by default, `ACWW_PICA_INTERP=0` off; the log,
+   2026-11-02). Not looked at yet: a picture between across a cut (D4), the objects' shadows while walking
+   (Azahar draws none), the input latency (a game frame more). The 2D (the UI) is up to two frames ahead of the
+   3D. For more speed, see the list in the log's last entry: the 3D's textures in VRAM, the compositing's commands,
+   the replay, the 3D's command list recorded once per list.
 2. **B2: R5.3, the UI at the wide screens' edges** (the user's first wish): the clock bottom right, the camera
    button top right, the text box flush with the bottom. Done in screen_compose (pica_display.c) with anchors the
    game gives under N3DS_DIRECT: `HudClock::draw` (src/main/unk_02089fbc.cpp) through `Oam_DrawCell`
@@ -571,3 +565,232 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
   CPU from recorded object coordinates and interpolated matrices (about 3 ms a 3D picture on core 0, which has about
   7 ms a frame to spare); C1's GPU transform isn't needed for it. The user's choice: C1 not taken, kept on the branch
   `c1-gpu-transform` (1c7f7422); here the CPU's transform as before.
+- 2026-11-02: D, the 3D pictures between the game's (the user: "dann leg bitte wie geplant los"), direct build only.
+  D1: the geometry engine gives each vertex its object coordinates and the id of its clip matrix (G3Vertex.obj, seg;
+  g3p_matrix once per clip matrix made, 150-470 a picture); gpu3d_pica.c keeps them beside the list's vertices (Rec,
+  normal memory) and can draw the list again from other matrices (`replay`: the geometry engine's s64 arithmetic,
+  then the same conversion to the GPU's clip space, `clip_pos`, as g3p_polygon; the viewport kept per batch).
+  Check (Azahar, the continue script on wide.sav, `ACWW_RTC` fixed, `ACWW_PICA_HASH=1`): `ACWW_PICA_REPLAY=1` (new:
+  the list drawn from the replay with its own matrices, the positions compared) 0 vertices differ in 1800+ pictures;
+  the recording alone (`ACWW_PICA_INTERP=0`) gives the build before's screens in the same order, 2729 pictures to
+  frame 4800 (two runs of the build before: the same as each other). With the replay check on, 24 pictures right
+  after the title's touch (game frames 2212-2230) differ and the rest is the same: **unverified** why; suspected the
+  check's work on core 2 shifting what depends on the sound's real time (Azahar's emulated time).
+  D3 and D4: the pairs. Each clip matrix gets a signature, a hash of the object coordinates of the first 4 vertices
+  submitted under it (before culling, so a turning model keeps it); at a new list's first picture (core 2) each
+  matrix is paired with the one of the list before of the same signature whose first vertex lands nearest on the
+  screen (at most 32 tried), none beyond a quarter of the screen; fewer than half paired: a cut, nothing
+  interpolated. The phase on the game's thread (g3p_between, every frame from g3_render): the frames between the
+  last two lists (2-4: interpolated, else not); the k-th frame after a new list shows t = (k + 1) / period, so the
+  newest list is shown as made on its last frame (one game frame later than before). Matrices interpolated element
+  by element in 20.12 (t in 16 bits), the vertices transformed as the replay into one of two vertex buffers (linear
+  memory, 2 x 480 KB; Rec and the matrices 3 x about 650 KB of the heap). Measured (Azahar, `ACWW_PICA_STATS=1`, to
+  frame 5900): 99.4-100 % of the matrices paired (36,000-72,000 per 300 lists), 0-2 cuts per 300 lists. Walking
+  left in town (frames 5450-5455): with it the bottom screen changes every frame (32,000-38,000 pixels), without it
+  every third (51,000-56,000); the house, the mailbox and the player move a step each frame, the player's skinned
+  model whole. Not looked at: a picture between across a cut (D4), the shadows (Azahar draws none). The period is
+  counted in g3_render's frames, so it holds with frameskip 0 only (the direct build's default; `ACWW_FRAMESKIP=1`
+  rasterises every other frame: the period then 1-2, wrong). Found on the way: the direct build hangs in Azahar with `ACWW_HEADLESS=1` (the build before too;
+  nothing logged, the log's thread starts at frame 600): the checks ran without it.
+- 2026-11-02: the user's runs of D on a New 3DS (logs/normal.txt: on, frames to 6960; logs/interp0.txt:
+  `ACWW_PICA_INTERP=0`, to 3000; reports from frame 2400): game frames a second 43-70, median 55 (off: 59.8-60.0).
+  On: core 0 waits for the GPU thread 7.7 ms a frame (off 1.4), pacing 1.0 (off 8.7); core 2 GPU wait 8.1 (off
+  3.7), idle 1.3 (off 8.5), its 3D job about 5.4 ms a frame (was 1.9: a picture every frame now); the GPU's 3D 5.0
+  ms a composited frame (off 1.2), compositing 5.9. So the GPU thread is the limit, and it waited for the GPU before
+  making the picture between (pair, lerp_matrices, replay ran after C3D_FrameBegin, which waits for the compositing
+  before): now done before it, overlapping the GPU's work (the replay buffer written then was last read by the 3D
+  job before the one before, which the last job's C3D_FrameBegin waited for). To be measured. Both runs end with
+  the watchdog's report (virtual time stopped: the program left, **unverified**).
+- 2026-11-02: the user's run with the replay before C3D_FrameBegin (logs/log.txt, New 3DS, town with more villagers
+  about, frames 2040-6480): 46-58 game frames a second while the 3D is on (59.8 indoors without 3D, frames
+  5520-6120). Per frame, core 2 (the GPU thread): 2D 1.3, 3D 5.1-7.7 (more with more villagers: 7.4-7.7 at 46-48
+  frames a second), compositing 2.5-2.9, GPU wait 6.4-9.3, idle 0.1-3.9; the GPU: 3D 5.2-6.2 and compositing 5.7-5.9
+  ms a composited frame (about 12 of 16.7: room left); core 0 waits for core 2 6.2-8.3 ms and has no pacing left.
+  So the limit is core 2: its own work (about 10 ms) and its waits for the GPU (7-8 ms) add up, because citro3d
+  works a frame at a time (C3D_FrameBegin waits until the GPU has done the work before) and the GPU thread does
+  every job's CPU part itself; moving the replay before the wait saved little (GPU wait 8.1 -> 7-8 ms). The 3D job
+  cost about 5.7 ms a picture before D too (1.9 ms a frame for a picture every third frame), so most of it is
+  drawing the list (the batches' states, textures, citro3d's calls), not the replay: **unverified** until the split.
+  For that, the GPU thread's profile now also gives the 3D job's parts: "vertices" (pairs, matrices, replay),
+  "VRAM" (`track`: the texture VRAM compared after uploads), "lighting" (the fog worked into the alpha); "3D" the
+  rest. Azahar (not the hardware's proportions): 3D 5.4, vertices 3.2, VRAM 1.3, lighting 0.9 ms a frame.
+- 2026-11-02: the user's run with the 3D job's parts (logs/log.txt, New 3DS, town, frames 1800-3960): 51-57 game
+  frames a second. Core 2 a frame: 2D 1.3, 3D (drawing the list) 2.0-2.5, vertices (pairs, replay) 1.6-2.3, VRAM
+  (`track`) 0.2-1.2, lighting (the fog in the alpha) 0.8-1.1, compositing 2.5-2.9, GPU wait 6.3-8.1 (9.3), idle
+  0.1-2.3; the GPU: 3D 5.0-5.6 and compositing 5.9-6.0 ms a composited frame. So the GPU wait is the largest part,
+  and it is the GPU's own time not overlapped: the 3D job waits for the compositing's GPU work (6 ms) less the work
+  done before its C3D_FrameBegin (vertices, VRAM: about 2.7), the compositing job for the 3D's (5.3) less its 2D
+  (1.3); a frame on core 2 is then about both GPU times plus what core 2 does inside a frame (the 3D's drawing, the
+  fog, the compositing: about 6 ms), about 17 ms. Changed: the fog worked into the alpha before C3D_FrameBegin too
+  (Azahar: the walk's pictures the build before's). Left: what core 2 does inside a frame (the list's batches drawn
+  again for each picture between: the same states and textures; the compositing's CPU part), and the GPU's 3D time
+  per picture (5.3 ms a frame now, the pictures in the wide view; `ACWW_PICA_PROBE` splits it); a command list
+  recorded once per list and sent again for the pictures between (GPUCMD_SetBuffer, GX_ProcessCommandList in
+  libctru) would remove the drawing's CPU part, a larger change.
+- 2026-11-02: the split between core 0, core 2 and the GPU looked at again (the user: is there a better
+  architecture?). Facts: the PICA runs command lists only, so everything that prepares its work is the CPU's (the
+  DS's texture formats decoded, the 2D layers, the vertex and command lists); citro3d's C3D_FrameBegin waits for the
+  whole GPU queue (libcitro3d.a disassembled: gxCmdQueueWait(-1)), so at most one citro3d frame is in flight, and
+  C3D_SyncDisplayTransfer inside a frame only splits it and queues the transfer (no wait). Threads: the GPU thread on
+  core 2 at the game's priority (0x30); the sound and the profile's sampler also on core 2 at 0x18, above it, so
+  their time shows in the GPU thread's parts (**unverified** how much: the sound was 1.1-2.0 ms a frame on core 0);
+  core 1 unused (the fallback only). The split dates from 2026-10-29, when core 0 was the limit (about 21 ms); with
+  the pictures between, core 2 is (the log above) and core 0 waits 6-8 ms. The largest loss: two citro3d frames a
+  display frame (the 3D job's and the compositing's), each waiting for the other's GPU work, so core 2 and the GPU
+  take turns. Proposed, by gain: (1) the 3D picture and the compositing in one citro3d frame, C3D_FrameSplit after
+  the 3D (or in parts of it) so the GPU draws the 3D while core 2 builds the compositing: estimated about 2.3 (the
+  3D's commands) + 11.3 (the GPU) = 13.6 ms a frame, **unverified**; (2) the sound on core 1
+  (APT_SetAppCpuTimeLimit; about 10 % of it); (3) the 3D's command list recorded once per list and sent again for
+  the pictures between; (4) the GPU's compositing (6 ms a frame), then the GPU's limit.
+- 2026-11-02: (1) and (2) of the proposal above done (the user: "ja mach"). Found first (libcitro3d.a and libctru.a
+  disassembled): C3D_FrameSplit only queues a frame's commands, the GPU starts on them at C3D_FrameEnd
+  (gxCmdQueueRun); citro3d's GX queue is the first member of `__C3D_Context`; gxCmdQueueRun returns at once on a
+  running queue, and on an idle one marks it so that gxCmdQueueAdd starts it; C3D_FrameEnd(0) flushes the data cache
+  over the whole linear heap before it runs the queue, C3D_FrameEnd(GX_CMDLIST_FLUSH) only the last commands;
+  C3D_FrameBufClear queues its memory fill without a split, C3D_FrameDrawOn doesn't split, C3D_SyncDisplayTransfer
+  in a frame splits it without a flush and queues the transfer.
+  (1) pica_display.c `pdisp_frame_open` / `pdisp_frame_run` / `frame_close`, direct build only (`ACWW_PICA_MERGE=0`:
+  a frame each, as before): the 3D job begins the citro3d frame, queues its commands flushed
+  (C3D_FrameSplit(GX_CMDLIST_FLUSH)) and starts the queue; the compositing goes on in the same frame (no
+  C3D_FrameBegin, so no wait for the 3D's GPU work) and ends it with GX_CMDLIST_FLUSH; before each transfer in a
+  running frame the commands are queued flushed first; every CPU write the GPU reads was already flushed where it is
+  made (textures, vertex lists, the backdrop, the transfers' sources). pdisp_idle ends a frame left open, a 3D job
+  after a 3D job ends the one before. The ACWW_FPS line of the GPU's time has "both" now (frames with the 3D and the
+  compositing; C3D_GetDrawingTime counts from the frame's end, so it leaves out what the GPU drew meanwhile).
+  (2) the sound's thread on the system core 1 first (host_plat_sampler_start's new `core1`; `ACWW_SOUND_CORE=2`: core
+  2 first, as before): Azahar's log "a thread on core 1", the DSP's queue never ran dry.
+  Checks (Azahar, the continue script with the walk, `ACWW_RTC` fixed): the plain 3DS build against HEAD's, 1278
+  composited pictures the same; the direct build with (1), `ACWW_PICA_INTERP=0` and `ACWW_SOUND_CORE=2`: every
+  picture to frame 3524 the build before's frame by frame, after it the same pictures a frame later (2729 to frame
+  4800 in the same order: the game's time shifted once, as with the replay check); with everything on, the walk's
+  frames 5450-5455 the build before's pictures of a frame earlier. Azahar's speed says nothing here (it runs the
+  cores one after another): to be measured on hardware.
+- 2026-11-02: one citro3d frame for the 3D and the compositing puts both's GX queue entries (transfers, fills,
+  command lists) in a queue cleared only at C3D_FrameBegin, which breaks when full (libctru's gxCmdQueueAdd:
+  svcBreak). Measured (Azahar, `ACWW_PICA_STATS=1`: the most entries a frame, read after C3D_FrameEnd): the continue
+  script with the walk to frame 5600 and the new game's script (intro, name entry) to 9000: at most 14 of 32. Guard:
+  before a transfer in a running frame with fewer than 12 entries left, the frame is ended and the compositing goes
+  on in one of its own (checked with a build where it always does: the walk's pictures the build before's).
+- 2026-11-02: on hardware (the user) the direct build with one citro3d frame stopped after the boot logo: its sound
+  played to the end, then nothing, the screens black but for the frame counter at 0; with `ACWW_PICA_MERGE=0` the
+  title came, with `ACWW_SOUND_CORE=2` (the frame still one) not. So the one frame stalls on hardware (Azahar: not);
+  why is **unverified** (looked through, libctru.a and libcitro3d.a disassembled: the queue run, drained and
+  restarted mid-frame, gxCmdQueueWait waiting on isRunning, the command lists' flushes; nothing found). Now off by
+  default (`ACWW_PICA_MERGE=1` on). For the diagnosis: when the GPU's work isn't done after a second at a
+  C3D_FrameBegin, the GX queue's entries (their types: 1 command list, 2 memory fill, 3 display transfer), how many
+  were submitted and how many done go to the log, written out at once (gxCmdQueueWait's timeout is in system ticks,
+  not nanoseconds as gx.h says: libctru.a disassembled). Azahar, the default: "in a frame each", the sound on core 1.
+- 2026-11-02: the user's runs. (a) `ACWW_PICA_MERGE=1` (logs/log.txt): the stall's report at frame 7, after 5 frames
+  with one citro3d frame: 10 entries, 3 submitted, 2 done, types 2 2 1 4 2 1 4 1 3 3: the 3D target's two memory
+  fills done, the 3D's command list submitted and never done. So the GPU stopped on that list: it was queued with
+  GX_CMDLIST_FLUSH, the flush left to GSP, and run at once, where C3D_FrameEnd(0) flushes the data cache itself
+  (GSPGPU_FlushDataCache over the linear heap) before it runs the queue (**unverified** that GSP's flush misses it;
+  Azahar has no cache). Also found: C3D_TexLoadImage of a texture in VRAM (the staged BG tiles, drawn while the
+  compositing is made) is C3D_SyncTextureCopy, which in a frame queues the commands before it without a flush: with
+  a running queue those would start unflushed too. Changed: the 3D's list queued with the queue stopped, its range
+  flushed by GSPGPU_FlushDataCache (GPUCMD_Split ends a list and moves gpuCmdBuf past it: libctru.a disassembled),
+  then run; before a transfer or a staged tile's copy with commands pending, and at the frame's end, the queue is
+  stopped once the GPU has done what it holds (gxCmdQueueWait, gxCmdQueueStop), and the frame ends with
+  C3D_FrameEnd(0) as citro3d's own (so only transfers and fills, whose sources are flushed where written, start
+  while the frame is open). Azahar, merged: no stall report, the walk's pictures the build before's (a frame later),
+  at most 14 GX entries. To be run on hardware with `ACWW_PICA_MERGE=1`.
+  (b) the default with the sound on core 1 (logs/normal.txt): at frame 968 the game stood 4 s (the watchdog; the
+  slowest frame 4029 ms, game 3997) and then "pxi7: receive FIFO overflow": **unverified**, suspected the sound's
+  thread held back on the system core (the 30 % limit) while the game waited for it; town 47-53 game frames a second,
+  core 2 GPU wait 7-10 ms, no better. The sound is back on core 2 by default (`ACWW_SOUND_CORE=1`: core 1 first).
+- 2026-11-02: the user's runs with the fixed one frame (logs/merge1.txt, `ACWW_PICA_MERGE=1`, to frame 13217) and
+  without (logs/normal.txt, to 3308), the sound on core 2 in both; medians over the reports with pictures between
+  (102 and 18; the routes not the same): game frames a second 54.3 (38-59) against 50.0 (39-52); core 2 GPU wait 5.5
+  against 9.0 ms, compositing 4.2 against 3.5, 3D 2.1, vertices 1.7-1.8, lighting 1.0-1.1, VRAM 0.9-1.0, 2D 1.3-1.5,
+  idle 1.2 against 0.6; core 0 waits for core 2 7.0 against 8.4. No stall report in 12,000 frames: one frame is on by
+  default now. The 4 s stand with "pxi7: receive FIFO overflow" came again in merge1.txt (frame 1067) with the sound
+  on core 2, so it isn't the sound on core 1 (the entry before is wrong there); cause **unverified** (twice near
+  frame 1000; not in normal.txt).
+- 2026-11-02: the 3D job's preparation on core 0 (the user: "ja mach das"): gpu3d_pica.c `prepare`, called by
+  g3p_render on the game's thread once the last 3D job is done: the texture VRAM's versions (`track`), the pairs, the
+  picture between's vertices (replay) and the fog in their alpha (on hardware about 0.9 + 1.8 + 1.0 ms a frame on
+  core 2, while core 0 waited for core 2 about 7). The job only draws what it is handed. The replay buffer written
+  then was last drawn two jobs ago, which the last job's C3D_FrameBegin waited for. The profile: all of it core 0's
+  "3D" now (the GPU thread's "vertices", "lighting", "VRAM" stay 0). Checks (Azahar): the plain 3DS build's 1278
+  pictures HEAD's; `ACWW_PICA_REPLAY=1 ACWW_PICA_INTERP=0` 0 vertices differ in 900 pictures; the walk's frames
+  5450-5455 the build before's pixel for pixel. To be measured on hardware.
+- 2026-11-02: the user's run with `prepare` on core 0 (logs/log.txt, frames 240-4440, 32 reports with the 3D on):
+  game frames a second 37.5-53.8, median 50.8 (merge1.txt: 54.3, another route). Core 0: "3D" 3.8 (the moved
+  work), waiting for core 2 5.3 (was 7.0); core 2: 3D 2.0, compositing 5.1, GPU wait 8.4, idle 2.7: about 11 ms a
+  frame of nothing to do. So the GPU is the limit now (normal.txt: 3D 5.3 + compositing 8.2 ms of its time a frame,
+  besides the gaps while it waits for commands), and moving CPU work can't pay: undone, `prepare` runs in the job
+  again, before the frame begins. Next: where the GPU's time goes. ACWW_PICA_STATS's "pica interp" line gives a
+  list's draws (batches) and vertices too now.
+- 2026-11-02: the user's probe run (logs/log.txt, `ACWW_PICA_MERGE=0 ACWW_PICA_PROBE=1 ACWW_PICA_STATS=1`, town):
+  the GPU's 3D 5-7 ms a picture for a list of 98-114 draws (batches) and 3100-4300 vertices; the compositing 9.2 ms
+  (probe 0), 8.7 without the sprites' upload, 7.3 without the blended passes (the 3D layer, 141,000 pixels), 7.9
+  without the backdrop (173,000 pixels, 31 draws), 7.5 without the BGs and OBJs (70,000 pixels, 164 quads), 2.6
+  without any draw, 1.8 without the screens' clears too. So the draws are about 6.6 ms; the backdrop (a small
+  texture) about 133 million pixels a second, the BG layers (in the main memory: the wide view keeps them out of
+  VRAM) about 41: textures read from the main memory are slow, and the 3D's are all there (RGBA8, C3D_TexInit).
+  Changed (direct build): the 3D's textures of the formats with a 1-bit alpha at most (all but A3I5 and A5I3) as
+  RGBA5551 (`ACWW_PICA_TEX16=0`: RGBA8 as before): half the bytes a texel. Azahar: the walk's pictures differ in
+  about 2,300 of 76,800 pixels, every one by 1 of 255 in a channel (the 5 bits' expansion to 8: not the decoder's
+  bit repetition there); `ACWW_PICA_STATS` gives the 3D's textures in use now: in town 53-68 of them, 330-500 KB
+  (RGBA5551 and RGBA8), which would fit the 1338 KB of VRAM left (next: in VRAM, through a linear staging copy:
+  the CPU's writes to VRAM fault on hardware, docs/3ds.md). To be measured on hardware.
+- 2026-11-02: the user's run with the RGBA5551 textures (logs/merge0.txt, `ACWW_PICA_MERGE=0 ACWW_FPS=1`, town): the
+  GPU's 3D 3.6-4.6 ms a picture (the probe run before: 5-7), the compositing 9.3; game frames a second 39.8-55.4,
+  median 49.8 (50.0 before, the same mode); core 2 GPU wait 8.8, idle 0.2. So the textures' reads from the main
+  memory were a large part of the 3D's GPU time; the compositing is the GPU's largest part now.
+- 2026-11-02: the compositing's GPU time, step (2) (the user: "ok dann bitte 2"). The backdrop under the bottom
+  screen's 3D can't go: the sky's BG shows behind the 3D there. Done instead (pica_display.c `top_unchanged`, direct
+  build, `ACWW_PICA_TOPSKIP=0` off): the top screen drawn again only when a hash of its engine's inputs changed (the
+  lines' states, the affine reference points, the OBJ priorities, the margins' affine BG, the BG palette, the BG
+  VRAM's granules, the sprites and their atlas pixels, the fps text, split off show_fps into fps_text so that it
+  counts every frame); never skipped with the 3D or a layer the CPU drew on it, or while probing. Its target keeps the
+  picture, which C3D_FrameEnd shows again. Checks (Azahar, the continue script with the walk to frame 5500,
+  `ACWW_PICA_HASH=1`): the screens' hash at every frame the same with and without it (5272 pictures), whole-screen
+  shots at 9 frames (title, house, town, the walk) pixel for pixel. It skips about 1 of 3 frames in town
+  (`ACWW_PICA_STATS`: drawn in 200 of 300): a temporary build named what changed: in each game frame's first frame
+  the affine reference points, in its second the reference points and the margins' affine BG again (the sky's
+  clouds), in its third nothing; so the top screen does change in 2 frames of 3. To be measured on hardware.
+- 2026-11-02: the user's run with the top screen's skip (logs/log.txt, `ACWW_FPS=1 ACWW_PICA_STATS=1`, frames
+  240-4560): game frames a second 41-64, median 53.5, with frames 1560-3240 at 56-64 and the fuller parts at 49-54;
+  the top screen drawn in about 200 of 300 frames, as in Azahar; core 2 a frame: 2D 1.1, 3D 2.0, vertices 1.9,
+  lighting 1.0, VRAM 0.6, compositing 5.1 (2.5-2.9 with a frame each before the one frame, 4.2 in merge1.txt), GPU
+  wait 4.5 (5.5), idle 2.2; core 0 waits for core 2 7.0. The 4 s stand with the PXI FIFO's overflow again (about
+  frame 1100). Next (the user: "ja mach das so"): (1) the compositing's CPU time split in the profile, the GPU
+  thread's line: "BG tiles" (bg_texture: the BGs' tile textures made and copied), "top hash" (top_unchanged),
+  "frame end" (C3D_FrameEnd: with GX_CMDLIST_FLUSH unset it flushes the data cache over the linear heap); the waits
+  in frame_stop stay "GPU wait", the transfers "uploads". (2) the replay makes a vertex's position once for the
+  polygon's vertices it shares (the last three made in a batch, the same object coordinates and matrix: the same
+  position). Checks (Azahar): `ACWW_PICA_REPLAY=1 ACWW_PICA_INTERP=0` 0 vertices differ in 900 pictures; the walk's
+  frames 5450-5454 the build before's frames 5451-5455 pixel for pixel (the game's time shifted again). Azahar's
+  profile (not the hardware's proportions): BG tiles 0.3, top hash 1.7 (!), frame end 0.3 ms. To be run on hardware.
+- 2026-11-02: the user's run with the split profile (logs/log.txt, frames 240-4440): game frames a second 41-63,
+  median 55.3, long stretches at 59-61. Core 2 a frame: 2D 1.1, 3D 2.0, vertices 1.6 (was 1.9: the shared
+  vertices' reuse saved 0.3), lighting 1.0, VRAM 0.7, compositing 3.0, BG tiles 0.6, top hash 1.1, frame end 0.2,
+  GPU wait 4.5, idle 1.5; core 0 waits for core 2 6.8. So the compositing's 5.1 was 3.0 of commands, 0.6 of tiles,
+  0.2 of the frame's end and 1.1 of the top screen's hash, mostly of the engine's BG VRAM (128 KB a frame, read on
+  core 2 just after core 0 copied it). Changed: the hash leaves the BG VRAM and palette out; instead the top
+  engine's BG textures are brought up to date before the decision (bg_texture, which compares the palette and only
+  the map and tiles a BG uses, once a frame, and which the drawing needs anyway), and a texture made again means a
+  change. Checks (Azahar, the walk to 5500, `ACWW_PICA_HASH=1`, with and without `ACWW_PICA_TOPSKIP=0`): the 5273
+  pictures the same in the same order (some a frame apart: the game's time); skipped as often as before (100 of
+  300 in town); Azahar's top hash 1.7 -> 0.2 ms. To be run on hardware.
+- 2026-11-02: the user's run with the cheaper top screen check (logs/log.txt, frames 240-7440, 57 reports with
+  pictures between): game frames a second 41.8-67.0, median 58.4 (55.3 before), long stretches at 59-61, the fuller
+  parts at 52-57; no 4 s stand this time. Core 2: top hash 0.2 ms (1.1), compositing 3.2, BG tiles 0.7, frame end
+  0.2, vertices 1.6, 3D 1.9, lighting 1.0, VRAM 0.7, 2D 1.1, GPU wait 4.6, idle 2.1; core 0 waits for core 2 6.4.
+  The changes since cd9fd9a0 committed one by one (the user's wish): the profile's parts, the system core for the
+  sound (option), the interpolation, the one citro3d frame, the top screen's skip, the RGBA5551 textures.
+  What could come next, by the GPU's and core 2's time it would save:
+  (a) the 3D's textures in VRAM (310-480 KB of 1338 KB free; the GPU reads its own memory faster: the 3D's GPU time
+      halved before with half the bytes), through a staging copy (the CPU's writes to VRAM fault on hardware) in
+      the one frame's rules (the copies' commands flushed, the queue stopped first);
+  (b) the compositing's commands (3.2 ms of core 2): fewer state changes and draws (backdrop 31, BG layers 164
+      quads, blended 205), or a command list kept for the top screen;
+  (c) the replay (1.6 ms): positions only into a buffer of their own (16 of 40 bytes a vertex), the fog (1.0 ms)
+      only where it is on;
+  (d) the 3D's command list recorded once per list and sent again for the pictures between (about 2 ms of core
+      2's 3D in 2 frames of 3; own command buffers beside citro3d's);
+  (e) the GPU's compositing: the BG layers in VRAM where they fit (the wide view keeps them in the main memory);
+  (f) the 4 s stand near frame 1000 with "pxi7: receive FIFO overflow" (seen in 4 of 6 runs, a bug of its own);
+  (g) the D items not looked at: a cut, the shadows, the latency; B2 (the UI at the wide screens' edges).
+
