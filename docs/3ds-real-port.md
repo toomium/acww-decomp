@@ -348,3 +348,8 @@ every frame, or pictures interpolated between the game's (needs R1).
   the log's thread writes it to log.txt through a FILE of its own, and once more at the program's end (atexit).
   Azahar, to frame 1200: the log whole, the lines after the exit included; with a write held up for 8 s on purpose
   (a test build): no frame over 70 ms (the first load's 709 ms aside), against 8 s before.
+- 2026-11-02: the user's run of 14cb7fc1 (about 5200 frames): everything fine (the user). 59.8 game frames a second
+  throughout but at the loads; the start 0.49 s; no frame of seconds; the sound's queue never ran dry, 32670-33190
+  frames played a second. The slowest: the first big load (frame 184) 581 ms, two later ones (2946, 4887) 280-285
+  ms; otherwise at most 40-75 ms. Core 0 a frame: pacing 6.9 ms to spare. The watchdog line at the end is the home
+  menu's.
