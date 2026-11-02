@@ -482,7 +482,10 @@ void snd7_receive(struct SNDCommand *list) {
     }
     if (!sStarted) {
         sStarted = 1;
-        if (!host_thread_start(snd7_thread, 0, 1)) fprintf(stderr, "snd7: no thread for the sound\n");
+        // (ACWW_SOUND_CORE=1: on the 3DS's system core 1 first, off the GPU thread's core 2; not the default: it
+        // didn't pay on hardware, docs/3ds-real-port.md)
+        int core1 = getenv("ACWW_SOUND_CORE") && atoi(getenv("ACWW_SOUND_CORE")) == 1;
+        if (!host_thread_start(snd7_thread, 0, core1 ? 2 : 1)) fprintf(stderr, "snd7: no thread for the sound\n");
     }
     return;
 #endif

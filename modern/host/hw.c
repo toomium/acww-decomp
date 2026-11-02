@@ -104,7 +104,7 @@ static int threads_quitting(void) { return __atomic_load_n(&sThreadsQuit, __ATOM
 static void thread_stopped(void) { __atomic_sub_fetch(&sThreadsRunning, 1, __ATOMIC_RELEASE); }
 static int thread_start(void (*fn)(void *), void *arg, int sampler) {
     __atomic_add_fetch(&sThreadsRunning, 1, __ATOMIC_RELAXED);
-    if (sampler ? host_plat_sampler_start(fn, arg) : host_plat_thread_start(fn, arg)) return 1;
+    if (sampler ? host_plat_sampler_start(fn, arg, sampler == 2) : host_plat_thread_start(fn, arg)) return 1;
     thread_stopped();
     return 0;
 }

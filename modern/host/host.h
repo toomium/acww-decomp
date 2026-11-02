@@ -57,6 +57,7 @@ u64 host_frame(void);
 u64 host_cycles(void);
 // a background thread (hw.c; another core: the 3DS's core 2 or 1) that ends when host_threads_quitting says so,
 // calling host_thread_stopped: the program's end waits for it (the 3DS frees the threads' stacks)
+// (otherCore: 0 the game's core, 1 another (the New 3DS's core 2 first), 2 another, the 3DS's system core 1 first)
 int host_thread_start(void (*fn)(void *), void *arg, int otherCore);
 int host_threads_quitting(void);
 void host_thread_stopped(void);
