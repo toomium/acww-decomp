@@ -73,21 +73,26 @@ typedef struct {
 } TexEntry;
 static TexEntry sTex[NTEX];
 static u32 sFrame;
-// a version per 4 KB piece of the texture image and palette slots, bumped when the piece's bytes change
+// a version per FINE bytes of the texture image and palette slots, bumped when they change: small, so that a
+// palette or texture the game animates doesn't make its neighbours in VRAM look changed (their decoding again, 4 KB
+// pieces before: a palette's five colours had six 4x4 textures decoded again, 30 ms on core 2)
+enum { FINE = 64 };
 static u8 sImgCopy[IMG_SIZE], sPalCopy[PAL_SIZE];
-static u32 sImgVer[IMG_SIZE / PIECE], sPalVer[PAL_SIZE / PIECE], sVer;
+static u32 sImgVer[IMG_SIZE / FINE], sPalVer[PAL_SIZE / FINE], sVer;
 
 static void track(const u8 *src, u8 *copy, u32 *ver, u32 size) {
-    for (u32 o = 0; o < size; o += PIECE)
-        if (memcmp(copy + o, src + o, PIECE)) {
-            memcpy(copy + o, src + o, PIECE);
-            ver[o / PIECE] = ++sVer;
-        }
+    for (u32 o = 0; o < size; o += PIECE)  // (PIECE at a time, then the FINE bytes that differ)
+        if (memcmp(copy + o, src + o, PIECE))
+            for (u32 f = o; f < o + PIECE; f += FINE)
+                if (memcmp(copy + f, src + f, FINE)) {
+                    memcpy(copy + f, src + f, FINE);
+                    ver[f / FINE] = ++sVer;
+                }
 }
 static u32 newest(const u32 *ver, u32 size, u32 start, u32 len) {
     u32 v = 0;
     if (!len) return 0;
-    for (u32 p = start / PIECE, n = 0; n <= len / PIECE + 1 && n < size / PIECE; p = (p + 1) % (size / PIECE), n++)
+    for (u32 p = start / FINE, n = 0; n <= len / FINE + 1 && n < size / FINE; p = (p + 1) % (size / FINE), n++)
         if (ver[p] > v) v = ver[p];
     return v;
 }
