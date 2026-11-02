@@ -337,3 +337,14 @@ every frame, or pictures interpolated between the game's (needs R1).
   32728). The log's thread starts at frame 600 (before: at the first frame), as the 10 s start may come from its SD
   writes beside the start's ROM reads (**unverified**; Azahar doesn't show it); a crash before frame 600 loses the
   start's lines.
+- 2026-11-02: the user's run of deb06634: the title's music sounds right now. The start's frame 0.48 s (was 10.4 s).
+  New: frame 719 took 8.3 s, all of it `frontend` on the game's thread: the frame 720 report's fprintf (in
+  frontend_backend_frame) waiting for stderr's lock, which the log's thread held through its first write to the SD
+  card (from frame 600 on). So the 9.6 s and 10.4 s frames before were most likely SD card writes too, now and then
+  that slow on the user's card; the cause inside the 3DS is not known. "pxi7: receive FIFO overflow" just before is
+  its consequence: the sound's thread ran on and its alarm messages for the ARM9 piled up (the outbox keeps 64, the
+  rest are dropped). Changed (plat_3ds.c, the direct build): stdout and stderr go through a device of their own
+  (devoptab_list[STD_OUT/STD_ERR]) that only copies into a 64 KB buffer (what doesn't fit is dropped and counted);
+  the log's thread writes it to log.txt through a FILE of its own, and once more at the program's end (atexit).
+  Azahar, to frame 1200: the log whole, the lines after the exit included; with a write held up for 8 s on purpose
+  (a test build): no frame over 70 ms (the first load's 709 ms aside), against 8 s before.
