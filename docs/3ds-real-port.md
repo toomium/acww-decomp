@@ -463,3 +463,69 @@ every frame, or pictures interpolated between the game's (needs R1).
   part unchanged (Azahar: the pictures the build before's); the clouds go on across the old top edge.
 - 2026-11-02: the user: the clouds look right now. (What looked like clouds only at the bottom was a probe round of
   `ACWW_PICA_PROBE`, which leaves parts out on purpose.)
+- 2026-11-02: what is left for more (the user's run of f5cfc55f, New 3DS, town, frames 2400-8760, 54 reports): 59-60
+  game frames a second throughout. Core 0 a frame: game 1.1, registers 1.3, geometry 2.1 + lighting 1.0 + vertices
+  1.0 (about 12 ms a 3D picture: the game draws one every third frame), 2D 1.4, VRAM 0.4, 3D 0.3; waiting for core 2
+  2.0, pacing 6.0 (to spare). Core 2: 2D 1.4, 3D 2.4 (about 7 ms a picture), compositing 2.4, waiting for the GPU
+  2.8, idle 7.8. The GPU: compositing 5.5-5.6 ms a composited frame, 3D 1.8 (about 5.4 ms a picture). In nearly
+  every 120 frames the slowest frame is 45 ms: core 2's 3D job then 29-34 ms (not looked into; texture decoding,
+  **unverified**). Estimates for 60 3D pictures a second (interpolated): the GPU about 5.6 + 3 x 1.8 = 11 ms of 16.7;
+  core 0 would need the geometry three times (+8 ms a frame against about 6-8 to spare, all in the game's frames):
+  not without R1's transform and lighting in the vertex shader (C); core 2's 3D job three times (+4.7 of 7.8 idle)
+  only if the in-between pictures reuse the batches. A higher 3D resolution: the 3D is already drawn 1:1 in the
+  screen's own pixels (the wide picture, 400x240 in 512x256), so only supersampling (smoother edges) is left: 2x2 needs
+  a 1024x512 picture (2 MB, double-buffered, plus depth) against 1338 KB of VRAM free, and four times the 3D's pixels.
+- 2026-11-02: the 45 ms frames (core 2's 3D job 29-34 ms on hardware; Azahar shows them too, 55-68 ms, in the title
+  and in town). Timed in the job (an instrumented build, not committed): the decoding of textures again, 8 textures
+  (63,744 texels) each time, after 1-2 changed 4 KB pieces of texture VRAM; the decoded textures were the same as
+  before (hashes). What changes: five colours of a palette the game animates (palette bytes 0x6e-0x78), which shares
+  its 4 KB piece with the palettes of six large 4x4 textures (palette base 0xa0); and an animated 64x32 16-colour
+  texture (0x2dc00) whose piece holds two more. Changed (gpu3d_pica.c, every 3DS build): the versions per 64 bytes
+  instead of 4 KB (compared 4 KB at a time first). Azahar: the longest 3D job 65-68 -> 16-19 ms outside the loads; the
+  pictures the build before's (both the direct and the plain 3DS build). Left: `track` compares all 640 KB of texture
+  VRAM whenever a texture was uploaded (nearly every 3D picture; about 3-4 ms a picture in Azahar), after g3_tex_setup
+  copied them all on core 0: the written ranges (GX_LoadTex) would do.
+- 2026-11-02: the user's run with the fine texture versions (New 3DS, about 7100 frames; town 2040-6600, 39
+  reports): 59.7-59.9 game frames a second; the slowest frame of each 120 now 37-39 ms (was about 45), and none of it
+  core 2's 3D job any more: the game's own frame (game, registers, geometry, lighting, vertices: 20-25 ms, the game's
+  work every third frame) and pacing. Core 0 a frame: geometry 2.4 + lighting 1.1 + vertices 1.0, registers 1.3, 2D
+  1.3, game 1.2, VRAM 0.4, 3D 0.4; waiting for core 2 1.6, pacing 6.0. Core 2: 3D 1.9 (was 2.4), 2D 1.5, compositing
+  2.5, waiting for the GPU 4.3, idle 6.7. The GPU: compositing 5.5-5.6 ms a composited frame (4.4-4.8 in part of the
+  town), 3D 1.6-2.0.
+- 2026-11-02: C1, the vertices transformed by the GPU (the user: "mach C"; direct build, `ACWW_PICA_TRANSFORM=0` the
+  CPU's transform as before). Measured first (the PC build, the save script): 2200-5500 vertices a 3D picture, the
+  clip matrix changing 150-470 times, about half of them within a polygon or strip (skinned characters). So the
+  geometry engine now gives each vertex in object coordinates with the id of its clip matrix (g3p_matrix: the
+  matrices in the order made, a list's own), and gpu3d_pica.c batches them with a palette of 12 matrices (vertex
+  shader uniforms, matched by content: a skinned strip goes A, B, A, B; a full palette starts a batch with an empty
+  one, a state change keeps it, slots uploaded only when their matrix changes). The new vertex shader
+  (gpu3d_pica_direct.v.pica) does the transform, the viewport and the picture's clip space, the DS's depth (Z- and
+  W-buffer), the texture coordinates and the fog's alpha (the density table in uniforms, as fog_density); the GPU
+  culls by attr bits 6-7 (GPU_CULL_BACK_CCW for front faces only: the doors' backs show without culling, not with
+  it). Vertices 16 bytes instead of 40. Found on the way: (1) without the CPU's culling a list has about twice the
+  polygons (2770 against the DS's 2048 after culling, which the game keeps to): the lists hold 4096 now; (2) clip
+  coordinates in the DS's own units (w about 10^5) made objects vanish on the GPU (Azahar): scaled by 1/4096 as the
+  CPU's vertices were, it draws them (why: not looked into). Dropped, as differences by design: the far-plane rule
+  (crossing it hidden unless attr bit 12) and the facing tested before clipping (a bow-tie quad may lose one
+  triangle). Checks (Azahar, the continue script, `ACWW_RTC` fixed): the 3D screen against the CPU transform at 8
+  frames (the title, the house with the player close, the town): 0.07-0.9 % of the pixels differ, 0.02-0.21 % by
+  more than 8 of 255; the top screen the same but at two frames (54-164 pixels). Every list's polygons all there (the
+  CPU's tests would keep 1398 of 2770 sent, the CPU path had 1396). Not checkable: `ACWW_RAMHASH` (two runs of the
+  old path already differ: the sound's thread runs in real time; host pointers in game memory differ from frame 0);
+  the game reads no vertex results (box and position tests stay the CPU's, with the same matrices; RAM_COUNT unread).
+  Z-buffered polygons: none in the game, that branch **unverified**. Azahar's core 0 in town: vertices 2.95 -> 2.55
+  ms a frame (geometry, lighting the same), core 2's 3D job 3.5 -> 4.0 ms (more batches and vertices), game frames a
+  second 47.1 -> 46.0 (Azahar runs the cores one after another). What C1 is for: the lists can be drawn again with
+  other matrices (R6.3, interpolation) without the geometry engine; its saving on core 0 is small (at most the
+  "vertices" part). On hardware: to be measured.
+- 2026-11-02: the user's runs of C1 on a New 3DS (town, from frame 2040), the GPU's transform against
+  `ACWW_PICA_TRANSFORM=0`: core 0 vertices 1.00 against 0.97 ms a frame, geometry 1.80 against 1.73, core 2's 3D job
+  1.53 against 1.47, the GPU's 3D 1.8-1.9 against 1.5-1.7 ms a composited frame; 59.9 against 60.0 game frames a
+  second. So no saving on hardware (the "vertices" part is only about 1 ms a frame there). And it flickers on
+  hardware, not in Azahar (the user): the trees' leaves, the trunks' feet on the ground, the museum's front.
+  Suspected, **unverified**: the PICA's vertex shader computes in 24-bit floats, so surfaces meant to lie exactly on
+  each other (decals, "depth equal") don't any more; the CPU's transform is exact (fixed point) and only its result
+  rounded; Azahar computes more precisely. Consequence for R6.3: the in-between pictures can be transformed on the
+  CPU from recorded object coordinates and interpolated matrices (about 3 ms a 3D picture on core 0, which has about
+  7 ms a frame to spare); C1's GPU transform isn't needed for it. The user's choice: C1 not taken, kept on the branch
+  `c1-gpu-transform` (1c7f7422); here the CPU's transform as before.
