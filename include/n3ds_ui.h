@@ -22,6 +22,8 @@ void Oam_Anchor(int mode, int from, unsigned anchor);
 // BGs (bit n: BGn) and windows (bit w: window w) of an engine (0 main, 1 sub) anchored from the next frame on, until
 // changed (bgs 0: none)
 void gpu2d_bg_anchor(int engine, int bgs, int windows, int anchor);
+// the text box's BG shown (TalkFrame_ShowBg / HideBg, src/main/unk_02065e88.cpp): the choices go with it
+extern int gN3dsTalkBgShown;
 
 #ifdef __cplusplus
 }

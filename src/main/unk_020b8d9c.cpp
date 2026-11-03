@@ -6295,8 +6295,8 @@ extern "C" void Sky_UpdateLineTables()
 extern "C" void gpu2d_margin_affine(int engine, int bg, int line, int pa, s32 x, s32 y);  // (modern/host/gpu2d)
 // The enhanced port's wide view (docs/3ds-real-port.md R5.3): the cloud BG on the 24 lines above and below the DS's
 // screen, as the line tables would have them if they went on (Sky_UpdateLineTables's formulas; the screen's line L
-// shows table line L - 1 + the screen offset, as in Sky_HBlankMain / Sub, and the lines above line 0 go on from its
-// table line), so that the clouds' perspective goes on beyond the DS's edges
+// shows table line L - 1 + the screen offset, as in Sky_HBlankMain / Sub; line 0 that of line 1 (Sky_VBlankMain /
+// Sub), and the lines above go on from it), so that the clouds' perspective goes on beyond the DS's edges
 static void Sky_GiveMarginLines(s32 engine)
 {
     s32 idx = gWeatherManager.lineBufferIndex;
@@ -6325,6 +6325,9 @@ extern "C" void Sky_VBlankSub()
     v2 = sSkyGradient.keyColors[1];
     REG16(HW_PLTT) = v2;
     SkyLineAffine *e = gWeatherManager.lineAffine[gWeatherManager.lineBufferIndex];
+#ifdef N3DS_DIRECT  // (line 0 from the screen offset's table line, as line 1: the wide view's margin above goes on from it)
+    e += y < 0xc0 ? y : 0xbf;
+#endif
     IO_W(&REG16(0x4001030), e->pa);
     IO_W(&REG32(0x4001038), e->x);
     IO_W(&REG32(0x400103c), e->y);
@@ -6360,6 +6363,9 @@ extern "C" void Sky_VBlankMain()
     v2 = sSkyGradient.keyColors[0];
     REG16(HW_PLTT) = v2;
     SkyLineAffine *e = gWeatherManager.lineAffine[gWeatherManager.lineBufferIndex];
+#ifdef N3DS_DIRECT  // (line 0 from the screen offset's table line, as line 1: the wide view's margin above goes on from it)
+    e += y < 0xc0 ? y : 0xbf;
+#endif
     IO_W(&REG16(0x4000030), e->pa);
     IO_W(&REG32(0x4000038), e->x);
     IO_W(&REG32(0x400003c), e->y);
