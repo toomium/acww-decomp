@@ -893,3 +893,5 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
     The touch before went by window 0's box, moved, while BG1 wasn't: most likely the save menu's "Save" too. Not
     checked: the save menu itself, a list of choices reaching above window 0's top line (line 60: outside the touch
     box, not mapped). The name entry's caret (NameEntryMenu, its own screen) was right before and after.
+  - The user's run on hardware: the text boxes (the choices and their hand) right now. The clouds not seen yet (no
+    clouds in the sky at the time).
