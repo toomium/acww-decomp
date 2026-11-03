@@ -951,3 +951,10 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
   shaken, an orange picked up, Y, A on it): the hand whole, in front of the dots. Not checked: other OBJs over the
   DS's left or right edge (a menu's OBJs sliding in sideways now show in the margin while partly on the DS's
   screen), the plain 3DS build (its code the same: there sScreenMode is 0).
+- 2026-11-03: the pause menu's active tab garbled (the user: the butterfly, and every tab but the pockets'), a bug of
+  every build. `MenuTabBar::showTab` (src/ov090/unk_ov090_022918e0.cpp) took the active tab's tiles from
+  `tabObjChars + idx * 0x60` with `tabObjChars` a u32 array: four times the 0x60 bytes (3 tiles of a row) the DS
+  uses (the matching code adds it to the address); broken in a3022a8b. Found from `ACWW_VRAMDUMP` (the PC build,
+  the insect book open): engine B's OBJ tiles 137-139 (the 4th tab, 2D mapping) held pieces of another picture, so
+  the renderers drew what was there. Fixed on `3ds` (e96d64c6, merged in). Checked (the PC build, the pockets open, R
+  through all 8 tabs): each tab shows its light picture when active. The direct build not looked at with it.
