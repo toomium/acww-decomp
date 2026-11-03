@@ -941,3 +941,13 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
   under N3DS_DIRECT). Not checked: the plain 3DS build's pictures (its code untouched but for the #ifdefs), the
   speed on hardware (fewer pieces during the wipe: cheaper expected). `MenuScreen_StartWipe*` has no callers
   outside its file (the menu screen's steps).
+- 2026-11-03: the menus' cursor over the DS's left edge (the user: A on the item at the top left of the pockets, the
+  cursor's left half cut off, "behind the BG"). The popup's hand (Grab / Drop on Ground / Never Mind) is an OBJ at
+  about x -3 on the DS; screen_compose cut every sprite at the DS's 256 pixels (`sprite_rect`), and with the dots now
+  in the margins the cut part looked hidden behind them. Now only an anchored sprite is cut there (before it is moved:
+  sliding out it still leaves the 3DS's screen at its edge); the others go on into the margins sideways (the atlas
+  holds an OBJ's whole box: gpu2d_obj_sprites). Only OBJs over the DS's screen are sprites at all, so none hidden
+  beside it appears. Checked (Azahar, the continue script on the save past Resetti: the orange tree beside the house
+  shaken, an orange picked up, Y, A on it): the hand whole, in front of the dots. Not checked: other OBJs over the
+  DS's left or right edge (a menu's OBJs sliding in sideways now show in the margin while partly on the DS's
+  screen), the plain 3DS build (its code the same: there sScreenMode is 0).
