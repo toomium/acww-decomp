@@ -435,8 +435,9 @@ typedef struct {
     C3D_Tex tex;               // what the GPU reads: in VRAM where it fits, else in linear memory
     C3D_Tex stage;             // (tex in VRAM: the copy the CPU decodes into, which the CPU can't write)
     int staged;
-    int uniform, opaque;       // a text BG whose map is one entry everywhere (the same wherever it is repeated); and
-                               // its tile without a transparent pixel
+    int period, opaque;        // a text BG's map repeated every 1, 2, 4 or 8 tiles both ways (0: none; the same
+                               // pattern wherever it is repeated); and, at 1 (one entry everywhere), its tile without
+                               // a transparent pixel
     u16 map[64 * 64];          // the map entries the texture shows (affine: 8-bit ones)
     u8 chars[0x10000];         // the tile data it was decoded from
     u8 pal[0x200];             // and the BG palette
@@ -575,10 +576,14 @@ static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s) {
             }
             t->map[ty * tw + tx] = entry;
         }
-    t->uniform = kind == 1;
-    for (int i = 1; i < tw * th && t->uniform; i++) t->uniform = t->map[i] == t->map[0];
+    t->period = 0;
+    for (int p = 1; p <= 8 && kind == 1 && !t->period; p *= 2) {  // (tw and th are 32 or 64: p divides them)
+        int i = 0;
+        while (i < tw * th && t->map[i] == t->map[i / tw % p * tw + i % tw % p]) i++;
+        if (i == tw * th) t->period = p;
+    }
     t->opaque = 0;
-    if (t->uniform && (t->map[0] & 0x3ffu) * tileBytes < sizeof t->chars) {
+    if (t->period == 1 && (t->map[0] & 0x3ffu) * tileBytes < sizeof t->chars) {
         const u8 *c = t->chars + (t->map[0] & 0x3ffu) * tileBytes;
         t->opaque = 1;
         for (u32 k = 0; k < tileBytes && t->opaque; k++) t->opaque = color256 ? c[k] != 0 : (c[k] & 0xf) && (c[k] >> 4);
@@ -730,12 +735,17 @@ static int affine_wraps(const Gpu2dLineState *s, int l) {
 }
 static BgTex *bg_texture(int e, int n, const Gpu2dLineState *s);
 // a BG the margins draw: the affine ones that wrap; the text BGs of one tile everywhere (the same wherever they are
-// repeated): what the screen transitions show (an iris: a BG of black outside its window, then over everything)
+// repeated): what the screen transitions show (an iris: a BG of black outside its window, then over everything); in
+// the direct build also those of a short repeated pattern (the menus' scrolling dots behind their panel)
 static int margin_bg(int e, const Gpu2dLineState *s, int l, int is3d, int windows) {
     if (affine_wraps(s, l)) return 1;
     if (l >= 4 || (l == 0 && is3d) || !(s->gpuBg >> l & 1) || s->bgKind[l] != 1) return 0;
     const BgTex *b = bg_texture(e, l, s);
-    return b && b->uniform;
+#ifdef N3DS_DIRECT
+    return b && b->period;
+#else
+    return b && b->period == 1;
+#endif
 }
 
 // a layer's texture and its wrapping for the group (0: none)
