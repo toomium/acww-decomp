@@ -44,7 +44,7 @@ Open, in the order proposed to the user (the user picks):
 2. **B2: R5.3, the UI at the wide screens' edges: done** (the log, 2026-11-02, "anchors"): the HUD's panels
    (clock, countdown, camera button, wallet) and HudProc's and MsgUiProc's icons (the green arrow, the input mode's
    pencil) towards the edges they are near, the text box with its OBJs (arrow, choices) flush with the bottom, the
-   touch mapped back. Not looked at: the other screens' UI (menus, the map, the
+   touch mapped back; the pause menus' dots and their wipe to the edges (2026-11-03). Not looked at: the other screens' UI (the
    shops), the top screen's. The user's run on hardware (2026-11-02): when saving, "Save" was only reached with
    the touch put a bit lower than it shows; most likely the choices' BG1 not moved with the text box (fixed
    2026-11-03, the log: the choice box goes with the text box; checked in Azahar with Kapp'n's choices, the save
@@ -895,3 +895,49 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
     box, not mapped). The name entry's caret (NameEntryMenu, its own screen) was right before and after.
   - The user's run on hardware: the text boxes (the choices and their hand) right now. The clouds not seen yet (no
     clouds in the sky at the time).
+- 2026-11-03: the pause menus' background to the wide screens' edges (the user: in the menus of X and Y the DS's old
+  screen edge shows; native, cheap, as the iris and the anchors). What it is (the PC build, `ACWW_VRAMDUMP` with the
+  Y menu open, a save from `wide.sav` past Resetti and saved, `ACWW_RTC` fixed): the bottom screen is engine B, no 3D,
+  no windows; BG2 the scrolling dots (map 0xe, 16 tiles in a 4x4 pattern over the whole 32x32 map, BGxHOFS/VOFS
+  48,48), BG3 the panel (BG1 too in the X menu, the map: BG2 the same dots, at 65,65), the tabs OBJs. The margins
+  were the backdrop (0x7084, blue), which the DS never shows there: the margins drew only text BGs of one entry
+  everywhere. The ways weighed: (1) the compositor's rule widened to a map repeated every 1, 2, 4 or 8 tiles both
+  ways (repeated beyond the screen it is the same pattern, as a wider DS screen would show it; the panel isn't
+  periodic); (2) a hint from each menu's setup, as the anchors (exact, but the setup found in every overlay); not:
+  scaling to 320x240 (`ACWW_3DS_SCALE`, not 1:1), the margins in one colour, the panel anchored apart. The user
+  chose (1). pica_display.c: `BgTex.uniform` becomes `period` (0 none, else 1-8; `opaque` still for period 1), and
+  `margin_bg` takes any period in the direct build, only 1 in the plain one (the same values as before there). The
+  same quads (the BG's one wider), no draw more; the period found where `uniform` was (once a frame for each BG drawn, beside the map's own compare; a map that
+  isn't periodic stops at its first mismatch).
+  Checked (Azahar, the continue script on that save, `ACWW_PICA_SHOT`): town at frame 4950 pixel for pixel the
+  build before's on both screens; with the map open (5800) the bottom screen differs in 27,648 pixels, the margins
+  (320x240 - 256x192), the dots on through them; both menus opened and closed, the zigzag wipe and the slide out
+  looked at (not compared with the build before). Still there (before too, when the margins were blue throughout):
+  at the end of the opening wipe the dots a DS-sized box, 7 pictures of the X menu (frames 5026-5027 framed by the
+  town, 5028-5032 by blue) and at least 1 of the Y menu (the capture began in it), about 0.1 s each time: engine A then shows the dots BG2 only inside window 1, which covers the DS's screen (WIN1H
+  0x00ff / 0x01ff, lines 0-192), and outside it the 3D (empty then) over the backdrop (0x7e04). A fix to weigh: a
+  window that covers the whole 256x192 (outside it on a DS at most a column of one pixel) gives the margins its
+  region instead of the outside one; the text box's window 0 (lines 60-192) never does, the iris has no window in
+  the direct build. Not checked: the title, the house's text boxes and the iris with this build (only town and the menus), other
+  screens with such patterns (shops, letters,
+  the design screens), the speed on hardware (no draw more: none expected).
+- 2026-11-03: the menus' wipe over the whole wide screens (the user: the menu's background comes in from the right and
+  goes back to the right, the margins not with it; "as the iris"). The wipe (src/main/unk_0206db88.cpp,
+  `MenuScreen_StartWipeIn` / `Out`) is engine A's window 1: inside it the dots (BG2, Win1Planes 0x1f), outside the
+  town (WinOut 0x1b, no BG2); an H-blank task (`MenuScreen_WipeHBlank`, src/itcm/unk_01ffcc60.cpp) sets WIN1H every
+  line to [pos - a zigzag of 0-23-0 over 48 lines, clamped to 0-0xfe; 0xff), pos moved by 20 a V-blank (in: 0x117 to
+  0, out: 0 to past 0x103, then 0xfe). Every line's window differed, so the 2D was composed a piece a line, and the
+  window stayed in the DS's 256x192. Now under N3DS_DIRECT the task has no H-blank function (`HBlank_Handler` skips a
+  NULL one; its V-blank part still moves pos and ends the wipe) and the V-blank parts give pos to `gpu2d_menu_wipe`
+  (include/n3ds_ui.h; recorded with the frame as `iris`, kept while engine A's window 1 is on, -1 once it is off).
+  pica_display.c (screen_compose) draws window 1's region of engine A from it: on each line of the whole screen the
+  left edge, the DS's 0-0xfe stretched over the screen's width, to the line's end (a quad a line, 240 at most, in
+  one draw). The dots go on through the margins (2026-11-03, the repeated patterns), so the margins open and close
+  with the wipe. The window over the whole DS's screen after the wipe in (pos 0) now covers the margins too: the 5
+  blue pictures before the menu (the entry before) are gone. Checked (Azahar, the continue script on the save past
+  Resetti, `ACWW_PICA_SHOT` every 3-5 frames): the X and Y menus opened and closed, the zigzag from the right edge of
+  the wide screen to its left and back, round and even, no blue margins, the town and the menus as before in the
+  DS's part. The PC build's code of unk_0206db88.cpp unchanged (tools/host_objcmp.sh, 32 and 64 bits; the rest
+  under N3DS_DIRECT). Not checked: the plain 3DS build's pictures (its code untouched but for the #ifdefs), the
+  speed on hardware (fewer pieces during the wipe: cheaper expected). `MenuScreen_StartWipe*` has no callers
+  outside its file (the menu screen's steps).
