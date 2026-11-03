@@ -840,12 +840,14 @@ static void layer_quad(const Group *g, int i, int l, int is3d, const BgTex *b) {
 }
 // (the OBJs of a priority only on the lines that have some: the OBJ layer is mostly empty)
 static int sObjPrio;
-// a sprite's lines [y0, y1), within the DS's screen (screen_compose: the target goes on beyond it)
+// a sprite's lines [y0, y1), within the DS's screen (screen_compose: the target goes on beyond it); there an OBJ over
+// the DS's left or right edge goes on into the margin (an item's cursor at the left edge), but an anchored one is cut
+// at the edge before it is moved (sliding out it leaves the 3DS's screen there)
 static void sprite_rect(const Gpu2dSprite *s, int y0, int y1) {
     int x0 = s->x, x1 = s->x + s->w;
-    if (sScreenMode) x0 = x0 < 0 ? 0 : x0, x1 = x1 > W ? W : x1;
     float dx = 0, dy = 0;
 #ifdef N3DS_DIRECT
+    if (sScreenMode && s->anchor) x0 = x0 < 0 ? 0 : x0, x1 = x1 > W ? W : x1;
     anchor_shift(s->anchor, &dx, &dy);
 #endif
     if (x1 > x0)
