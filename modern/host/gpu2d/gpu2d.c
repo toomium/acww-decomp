@@ -727,7 +727,7 @@ typedef struct {
     int haveObj0[2], topEngine;
 #ifdef N3DS_DIRECT
     Gpu2dMarginAffine margin[2];
-    int iris;
+    int iris, menuWipe;
     u8 objAnchor[2][128];
     Gpu2dBgAnchor bgAnchor[2];
 #endif
@@ -749,6 +749,8 @@ void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_
 }
 static int sIris = -1;  // (kept until changed)
 void gpu2d_iris(int progress) { sIris = progress; }
+static int sMenuWipe = -1;  // (kept while engine A's window 1 is on)
+void gpu2d_menu_wipe(int pos) { sMenuWipe = pos; }
 static u8 sObjAnchor[2][128], sObjAnchorOam[2][128][6];  // (each entry's anchor, and what it was given for)
 static Gpu2dBgAnchor sBgAnchor[2];
 void gpu2d_obj_anchors(int engine, const void *oam, const uint8_t *anchors) {
@@ -772,6 +774,8 @@ static void record_start(const Gpu2dFrameInput *in) {
     memcpy(r->margin, sMargin, sizeof r->margin);
     sMargin[0].bg = sMargin[1].bg = 0;
     r->iris = sIris;
+    if (!(gpu2d_read32(0x04000000) & 0x4000)) sMenuWipe = -1;
+    r->menuWipe = sMenuWipe;
     // (an anchor only for an entry still as the game gave it: OAM loaded another way gets none)
     for (int n = 0; n < 2; n++)
         for (int i = 0; i < 128; i++)
@@ -870,6 +874,7 @@ void gpu2d_draw_layers(int record) {
 #ifdef N3DS_DIRECT
     memcpy(sLayers->margin, r->margin, sizeof sLayers->margin);
     sLayers->iris = r->iris;
+    sLayers->menuWipe = r->menuWipe;
     memcpy(sLayers->bgAnchor, r->bgAnchor, sizeof sLayers->bgAnchor);
     for (int n = 0; n < 2; n++) draw[n].objAnchor = r->objAnchor[n];
 #endif

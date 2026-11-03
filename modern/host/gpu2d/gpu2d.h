@@ -102,6 +102,7 @@ typedef struct Gpu2dLayers {
 #ifdef N3DS_DIRECT
     Gpu2dMarginAffine margin[2];  // per engine, for this frame
     int iris;                     // the screen transitions' iris (gpu2d_iris) for this frame
+    int menuWipe;                 // the menus' wipe (gpu2d_menu_wipe) for this frame
     Gpu2dBgAnchor bgAnchor[2];    // per engine (gpu2d_bg_anchor), for this frame
 #endif
 } Gpu2dLayers;
@@ -150,6 +151,10 @@ void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_
 // the screen transitions' iris, drawn by the host over both whole screens: 0 open to 0x1000 closed, -1 none; given by
 // the game at its V-blank, from the next frame on
 void gpu2d_iris(int progress);
+// the menus' wipe (MenuScreen_WipeInVBlank / WipeOutVBlank): engine A's window 1, its left edge on line y at
+// pos - (a zigzag of 24 lines up and 24 down), drawn by the host over the whole wide screen; given by the game at its
+// V-blank, from the next frame on, kept while that window is on (-1 none)
+void gpu2d_menu_wipe(int pos);
 // the UI elements' anchors (Gpu2dSprite.anchor): one for each of an engine's 128 OAM entries, given with the OAM the game
 // loads (0x400 bytes) at its V-blank; an entry keeps its anchor while OAM holds what it held then
 void gpu2d_obj_anchors(int engine, const void *oam, const uint8_t *anchors);

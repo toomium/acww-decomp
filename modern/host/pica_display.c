@@ -727,6 +727,20 @@ static int bg_anchored(int e, const Gpu2dLineState *s) {
 #endif
 static float piece_y0(const Group *g, int i) { return g->y0[i] == 0 ? 0.0f - sY : (float)g->y0[i]; }
 static float piece_y1(const Group *g, int i) { return g->y1[i] == H ? H + sY : (float)g->y1[i]; }
+#ifdef N3DS_DIRECT
+// the menus' wipe (gpu2d_menu_wipe) as window 1's shape over the group's lines of the whole screen: as the game's
+// H-blank (MenuScreen_WipeHBlank) sets it, the left edge pos - a zigzag (0-23-0 over 48 lines) clamped to 0-0xfe,
+// to the line's end; the DS's 0-0xfe stretched over [sX0, sX1), so the edge crosses the wide screen as the DS's
+static void menu_wipe(const Group *g) {
+    for (int i = 0; i < g->n; i++)
+        for (int y = (int)piece_y0(g, i); y < (int)piece_y1(g, i); y++) {
+            int p = (y % 48 + 48) % 48, e = sLayers.menuWipe - (p < 24 ? p : 47 - p);
+            if (e >= 0xfe) continue;
+            float x = e <= 0 ? sX0 : sX0 + (float)e * (sX1 - sX0) / 0xfe;
+            rect(x, (float)y, sX1, (float)(y + 1), 0, 0, 0, TEX, 0);
+        }
+}
+#endif
 // (group: the passes a margin layer can leave out - everything under it is a 2nd target the effects are allowed
 // on, so none of it shows "as it is"; nothing after it reads the stencil)
 static int sAllSecond, sNoMark;
@@ -1003,6 +1017,13 @@ static void group(const Group *g) {
             if (!(dispcnt & 0x2000u << w)) continue;
             stencil(GPU_ALWAYS, (u32)(w + 1) << 3 | (shows[w + 1] & 0x20 ? 0 : 4), 0, 0x1c);
             begin();
+#ifdef N3DS_DIRECT
+            if (w == 1 && g->engine == 0 && sScreenMode && sLayers.menuWipe >= 0) {
+                menu_wipe(g);
+                end();
+                continue;
+            }
+#endif
             for (int i = 0; i < g->n; i++) {
                 const Gpu2dLineState *ps = piece_state(g, i);
                 float x1 = (float)(ps->winh[w] >> 8), x2 = (float)(ps->winh[w] & 0xff), y0 = (float)g->y0[i], y1 = (float)g->y1[i];
@@ -1323,6 +1344,7 @@ static int top_unchanged(int e, u32 used, u32 cpuBg) {
 #ifdef N3DS_DIRECT
     h = hash32(h, &L->margin[e], sizeof L->margin[e]);
     h = hash32(h, &L->iris, sizeof L->iris);
+    h = hash32(h, &L->menuWipe, sizeof L->menuWipe);
     h = hash32(h, &L->bgAnchor[e], sizeof L->bgAnchor[e]);
 #endif
     // (as layer_bind would at the first group showing it: the same state, so the same texture)
