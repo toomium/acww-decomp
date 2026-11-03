@@ -45,9 +45,10 @@ Open, in the order proposed to the user (the user picks):
    (clock, countdown, camera button, wallet) and HudProc's and MsgUiProc's icons (the green arrow, the input mode's
    pencil) towards the edges they are near, the text box with its OBJs (arrow, choices) flush with the bottom, the
    touch mapped back. Not looked at: the other screens' UI (menus, the map, the
-   shops), the top screen's. **Open (the user, 2026-11-02, hardware):** when saving, "Save" is only reached with
-   the touch put a bit lower than it shows - the save menu's choices and their touch boxes disagree (not fixed yet;
-   to look at: whether the choices are drawn moved while the touch goes by another box, or the other way round).
+   shops), the top screen's. The user's run on hardware (2026-11-02): when saving, "Save" was only reached with
+   the touch put a bit lower than it shows; most likely the choices' BG1 not moved with the text box (fixed
+   2026-11-03, the log: the choice box goes with the text box; checked in Azahar with Kapp'n's choices, the save
+   menu itself on hardware still to check).
 3. Smaller, optional: texture VRAM's tracking from the written ranges (GX_LoadTex) instead of copying and comparing
    all 640 KB (g3_tex_setup on core 0, `track` on core 2) whenever a texture is uploaded; the sky's cloud BG as
    one-line quads (about 1.5-2 ms of the GPU): try the same quads ordered in 8-line blocks (the target's tile cache).
@@ -863,3 +864,32 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
   box's scenes), the speed on hardware (the same quads, so no GPU cost expected: `ACWW_FPS=1` to measure).
 - 2026-11-02: the user's run on hardware: when saving, the touch has to be put a bit lower than "Save" shows to
   reach it (B2's touch mapping and the save menu's choices disagree). Written down only, not fixed (the user's wish).
+- 2026-11-03: the user's run on hardware: at sunset a line of the sky at the top shows the clouds wrong (no cloud in it
+  while one passes, a cloud in it after it has gone); in text boxes with choices the cursor too low since the text
+  box is flush with the bottom.
+  - The clouds, a bug of every build: the runtime passed the display registers on to the renderers only when a half
+    changed (`forward_display`, modern/host/hw.c), but on a DS a write to BGxX / BGxY reloads the affine BG's internal
+    reference point even with the same value. The sky's H-blank writes each line's table entry; where two lines have
+    the same Y (near the sky's top the table's Y steps by 0 or 192 a line: lines 1 and 2 both entry 0 at a screen
+    offset of 0), the renderer went on by PD (one texel a line) instead: lines 1 and 2 of the DS's screen (rows 25-26
+    of the top screen) up to two texels off, a cloud's top line cut off from it (`ACWW_PICA_SHOT` and the line states
+    printed at frame 3900, the continue script on wide.sav, `ACWW_RTC="2026-04-01 18:30:00"`: line 2's Y 6816 where
+    the table has 6304; with the fix the lines are the table's and the cloud's edge whole). melonDS (`--oracle`) got
+    the same filtered writes, so the oracle couldn't show it. Fixed on `3ds` (its own commit, merged in): the
+    reference points of both engines passed on at every write.
+  - And a seam of the wide view only: line 0 of the DS's screen gets the V-blank's values, table entry 0 without the
+    screen offset (`screenOffsetY`: the menu transitions, the camera's close-up in a talk, up to 30), line 1 entry
+    `off`, the margin above `off - 1` on. Under N3DS_DIRECT `Sky_VBlankMain` / `Sub` now give line 0 entry `off`, as
+    line 1 (src/main/unk_020b8d9c.cpp). Checked only with the offset 0 (a cloud leaving through the top, frames
+    4000-4060: rows 24 and 25 the same but for the stars); a nonzero offset not seen (**unverified**: no talk or menu
+    in the run). The cloud BG is 256x256 and wraps (BG3CNT 0x6f00), so engine B's V-blank writing X without the
+    H-blank's `(u16)` doesn't matter.
+  - The cursor: the hand of the talk's choices (`HandCursor`, drawn in `TalkWindowState::draw`) is anchored with the
+    text box; the choice box is BG1 (`ChoiceWindow`, src/main/unk_020a8c9c.cpp), which wasn't: the hand 24 lines below
+    its choice. `ChoiceWindow::showLayer` / `hideLayer` now anchor BG1 with BG2 and window 0 while the text box is
+    shown (`gN3dsTalkBgShown`, set in TalkFrame_ShowBg / HideBg, include/n3ds_ui.h; a choice box without a text box
+    stays where it is). Checked (Azahar, the town script, Kapp'n's "fond o' the name" choices): the hand at the chosen
+    line, and a click (xdotool) on the drawn "Yeah, it's cute!" takes that choice (Kapp'n: "a perfect young lass").
+    The touch before went by window 0's box, moved, while BG1 wasn't: most likely the save menu's "Save" too. Not
+    checked: the save menu itself, a list of choices reaching above window 0's top line (line 60: outside the touch
+    box, not mapped). The name entry's caret (NameEntryMenu, its own screen) was right before and after.
