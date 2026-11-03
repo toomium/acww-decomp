@@ -680,7 +680,8 @@ static void io_read(u32 a) {
     } else if (w == IO1 + 0x10) R32(w) = card_read_data();
 }
 
-// display registers for the renderer: the 3D command ports in full on every write, the others as changed halves
+// display registers for the renderer: the 3D command ports in full on every write, the others as changed halves (and
+// the affine reference points on every write)
 static void forward_display(u32 w, u32 old) {
     u32 v = R32(w);
     if ((w >= 0x04000400 && w < 0x04000600) || w == 0x04000600) { sGxWrites++; render_write32(w, v); return; }
@@ -691,9 +692,11 @@ static void forward_display(u32 w, u32 old) {
         }
         return;
     }
+    // (BGxX / BGxY of either engine: a write reloads the affine BG's internal reference point even with the same value)
+    int reload = (w & ~0x1014u) == 0x04000028;
     for (int h = 0; h < 2; h++) {
         u16 n = v >> (16 * h), o = old >> (16 * h);
-        if (n != o) render_write16(w + 2 * h, n);
+        if (n != o || reload) render_write16(w + 2 * h, n);
     }
 }
 static int is_display(u32 w) {
