@@ -730,3 +730,12 @@ the exheader can enable core 2 on the New 3DS (1.3).
   RAM hash file is `~/acww-ref/play.ramhash`, written with `ACWW_RUNNER="setarch -R"`: on x86-64 the RAM holds host
   addresses, so with address randomisation two runs of the same binary differ from frame 0; without it they are byte
   for byte the same. It compares only with runs of the same binary (or one of the same code layout) made that way.
+- 2026-11-03: a bug of every build, found on 3ds-real-port (the user: a line of the sky drawn wrong at sunset): the
+  runtime passed the display registers on to the renderers only as changed halves (`forward_display`, hw.c), but a
+  write to BGxX / BGxY reloads the affine BG's internal reference point even with the same value. The sky's H-blank
+  writes the same Y on some lines near its top, which the renderers then took as the last line's plus PD: those
+  lines up to two texels off, a cloud's top line cut off. Now passed on at every write (both engines; melonDS with
+  `--oracle` got the same filtered writes). The save script on the x86-64 build (GCC 14), before and after: the save
+  file the same, RAM dumps at frames 22500 and 33000 differing only as two runs of one binary do (address
+  randomisation: 13822 bytes either way), the screenshots only in the top screen's sky (frames 22000-23000, rows
+  1-38); the oracle's `play` captures identical.
