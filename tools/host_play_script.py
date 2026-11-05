@@ -12,6 +12,8 @@ Scripts (headless runs with the oracle's firmware image and a fresh save file un
             Start -> "Save and end": the first save (written to ACWW_SAVE) and back to the title.
   continue  with the save file from `save`: the title's continue path, the player wakes up in the house and
             stands in front of it in town.
+  menu      with the save file from `save`: continue, out of the house, Y: the pause menu on the pockets (frame 4400;
+            R / L at later frames go through its tabs, 200 frames apart is enough).
   gate-host, gate-visit
             local wireless between two copies (tools/host_wireless_test.sh), each with the save file from `save` and
             ACWW_TEST_JOB_DONE=1 (the gate opens only after Nook's part-time job): continue, walk to the gate house,
@@ -22,7 +24,7 @@ Frame numbers are virtual frames (ACWW_KEYS / ACWW_TOUCH: frame:frames:value); k
 """
 import sys
 
-A, B, START, RIGHT, LEFT, UP, DOWN = 0x1, 0x2, 0x8, 0x10, 0x20, 0x40, 0x80
+A, B, START, RIGHT, LEFT, UP, DOWN, R, L, X, Y = 0x1, 0x2, 0x8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x200, 0x400, 0x800
 
 
 def every(start, end, step, frames, value):
@@ -63,6 +65,13 @@ def cont():
     keys = every(2400, 30000, 60, 6, A)
     touch = [(2200, 10, '128,96')]
     return keys, touch
+
+
+def menu():
+    # with the save file from `save`: continue (the player is out of the house at about frame 4100), Y opens the pause
+    # menu on the pockets at 4400 (shown from about 4450); X would open it on the map
+    keys = every(2400, 3500, 60, 6, A) + [(4400, 6, Y)]
+    return keys, [(2200, 10, '128,96')]
 
 
 def moves(frame, seq):
@@ -106,7 +115,7 @@ def gate_visit():
     return keys, [(2200, 10, '128,96')]
 
 
-SCRIPTS = {'play': play, 'town': town, 'save': save, 'continue': cont, 'gate-host': gate_host,
+SCRIPTS = {'play': play, 'town': town, 'save': save, 'continue': cont, 'menu': menu, 'gate-host': gate_host,
            'gate-visit': gate_visit}
 
 

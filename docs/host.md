@@ -484,7 +484,7 @@ matching build and with the i386 build's screenshots and sound staying bit-ident
   `Visitor_CheckTomNook` wants the previous scene to be a house room), tells about the loan, walks off and clears the
   new-town state (`SpNpcNookIntro::mainAct04` -> `GameStart_Clear`); from then on Start opens "Do you want to quit
   playing for now?" with "Save and end" first: the save (both copies of the town data, 0x0-0x2bfc0 in 256-byte
-  writes, each verified) and the title screen. The scripts that get there are `tools/host_play_script.py town|save|continue` (one script for
+  writes, each verified) and the title screen. The scripts that get there are `tools/host_play_script.py town|save|continue|menu` (one script for
   every build since docs/portability.md 3.4; `eval "$(python3 tools/host_play_script.py save)"` sets `ACWW_KEYS` and
   `ACWW_TOUCH`; the oracle's firmware image, the default pinned clock, a fresh `ACWW_SAVE`). With the frame-based time
   the game reaches each point sooner and makes a different town (its random seeds come from the clock): `town` - the
@@ -497,7 +497,9 @@ matching build and with the i386 build's screenshots and sound staying bit-ident
   at 24000-24240 every 60 (into the house), Down at 24900 (back out: Tom Nook), A every 60 frames 25300-31840 (his
   talk), Start at 32300 and A at 32500, 32700, ..., 33500 (Save and end; "Come back and see us again" at ~32750), the
   title at ~34500. `continue` (A every 60 frames from 2400 with that save file): the greeting, the player waking up in
-  the house, in front of the house in town from ~4300. Under `ACWW_TIMING=legacy` the earlier i386 script
+  the house, in front of the house in town from ~4300. `menu` (2026-11-04): A every 60 frames 2400-3500 with that
+  save file, the player out of the house at ~4100, Y at 4400: the pause menu on the pockets from ~4450 (the PC
+  build; R / L at later frames go through its tabs). Under `ACWW_TIMING=legacy` the earlier i386 script
   applied before the isAnimFinished fix (since then **unverified**: the fix changes that town too) (A and Start to 21050, Down 21100-21500, the walk 23200:60:80 23300:200:10 23520:220:80 23750:620:10
   24380:120:80 24510:400:10 24970:175:40 25150:64:10 25220:100:40 25330:14:20 25350:150:40 to the door at (151, 109), A
   at 25700-25940, 26600:150:80, A 27000-33540, Start 34000, A 34200-35200: the save at 34786-34907). With
