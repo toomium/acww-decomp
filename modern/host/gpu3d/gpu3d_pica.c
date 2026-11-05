@@ -413,6 +413,7 @@ static int interp_on(void) {  // ACWW_PICA_INTERP=0: off
     if (sInterp < 0) sInterp = !getenv("ACWW_PICA_INTERP") || atoi(getenv("ACWW_PICA_INTERP"));
     return sInterp;
 }
+void g3p_set_interp(int on) { sInterp = on != 0; }  // (the options page: the game's thread, like interp_on)
 int g3p_between(const G3RenderState *r) {
     // shortcut: counts g3_render's frames, every frame only with ACWW_FRAMESKIP=0 (the direct build's default)
     sFrames++;

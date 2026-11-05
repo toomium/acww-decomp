@@ -74,6 +74,8 @@ static int sNV;
 
 static Gpu2dLayers sLayers;            // its pixel buffers in linear memory (the GPU's transfers read them)
 static C3D_Tex sBg[2][4], sObj[2], sRegion[2], s3d;
+static C3D_Tex sOpt;                   // the options page's picture (gpu2d_options), and its linear copy for the upload
+static uint32_t *sOptStage, sOptSerial;
 static C3D_Tex sSprites;               // the OBJs as sprites (Gpu2dLayers.sprite: the direct build), their atlas
 // The direct build: each engine's backdrop colours, a texel row per line (8 x 256, the lines after the last as the
 // last), so that the backdrop is a quad per group and the sky's colour changing every line (its H-blank) doesn't cut
@@ -378,6 +380,7 @@ int pdisp_init(void) {
         return 0;
     C3D_TexSetFilter(&sSprites, GPU_NEAREST, GPU_NEAREST);
     C3D_TexSetWrap(&sSprites, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    if (!(sOptStage = linearAlloc(W * H * 4)) || !tex(&sOpt, GPU_RGBA8, 0)) return 0;
     for (int e = 0; e < 2; e++) {
         if (!C3D_TexInit(&sBackdrop[e], 8, 256, GPU_RGBA8)) return 0;
         C3D_TexSetFilter(&sBackdrop[e], GPU_NEAREST, GPU_NEAREST);
@@ -1376,6 +1379,28 @@ static int top_unchanged(int e, u32 used, u32 cpuBg) {
     return same;
 }
 
+// The direct build: the options page and the pause menu's button (gpu2d_options) over the DS's picture at (x0, y0) on a
+// screen sw wide, in the DS's pixels as screen_compose's
+static void options_page(float x0, float y0, float sw) {
+#ifdef N3DS_DIRECT
+    if (!sOptSerial || (sLayers.optPageY >= H && sLayers.optBtnY == GPU2D_NO_BTN)) return;
+    C3D_Mtx m;
+    Mtx_OrthoTilt(&m, -x0, sw - x0, 240.0f - y0, -y0, 0.0f, 1.0f, true);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, sUProjection, &m);
+    source(&sOpt);
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
+    sTag = ST_SCREEN;
+    begin();
+    rect(0, 17.0f + (float)sLayers.optPageY, W, H, 0, 1, 17, TEX, 0);  // (cut at the DS's bottom edge while it slides)
+    if (sLayers.optBtnY != GPU2D_NO_BTN) rect(26, (float)sLayers.optBtnY, 50, (float)sLayers.optBtnY + 16, 0, 24.0f / TEX, 0, TEX, 0);
+    end();
+    projection(sw, 240.0f, 1);
+    opaque();
+#else
+    (void)x0, (void)y0, (void)sw;
+#endif
+}
+
 // The direct build: the screen transitions' iris (gpu2d_iris) over a whole screen sw wide: black outside a circle round
 // its middle, which opens from nothing to the screen's corners; a ring of quads out to beyond the screen's edges
 static void iris(float sw) {
@@ -1580,6 +1605,13 @@ static void frame_job(void *arg) {
         }
         upload(s3dStage, &s3d, W * H * 4, GX_TRANSFER_FMT_RGBA8);
     }
+#ifdef N3DS_DIRECT
+    if (sLayers.optPic && sLayers.optSerial != sOptSerial) {  // (a new page picture: copied at once, the game's thread may change it)
+        sOptSerial = sLayers.optSerial;
+        memcpy(sOptStage, sLayers.optPic, W * H * 4);
+        upload(sOptStage, &sOpt, W * H * 4, GX_TRANSFER_FMT_RGBA8);
+    }
+#endif
     sNV = 0;
     if (sStats < 0) sStats = getenv("ACWW_PICA_STATS") && atoi(getenv("ACWW_PICA_STATS"));
     for (int e = 0; sStats && e < 2; e++) {  // (the pixels the layers the CPU drew actually have)
@@ -1655,6 +1687,7 @@ static void frame_job(void *arg) {
             C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
             C3D_AlphaTest(false, GPU_ALWAYS, 0);
             opaque();
+            if (s == 1) options_page(x0, y0, sw);
             iris(sw);
             if (s == 0) show_fps();
             continue;

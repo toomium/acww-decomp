@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <3ds.h>
 #include <sys/iosupport.h>
@@ -67,6 +68,10 @@ void host_plat_init(void) {
     freopen(DIR "log.txt", "w", stdout);
     freopen(DIR "log.txt", "a", stderr);
     setvbuf(stderr, 0, _IOLBF, 1024);  // (a line at a time: unbuffered, every piece of a line was a write to the SD card)
+#endif
+#ifdef N3DS_DIRECT  // (a save of acww.cfg cut short, options_3ds.c opt_save)
+    remove(DIR "acww.cfg.tmp");
+    if (access(DIR "acww.cfg", F_OK)) rename(DIR "acww.cfg.bak", DIR "acww.cfg");
 #endif
     FILE *f = fopen(DIR "acww.cfg", "r");
     static char line[16384];  // (input scripts: ACWW_KEYS is several KB)

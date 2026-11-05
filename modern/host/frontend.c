@@ -11,6 +11,7 @@
 #include "frontend.h"
 #include "host.h"
 #include "host_mem.h"
+#include "options_3ds.h"
 
 static AcwwShm *sShm;
 
@@ -63,6 +64,9 @@ static u32 scripted_keys(void) {
 
 // at each VBlank: publish the frame, take the input
 void frontend_frame(void) {
+#ifdef N3DS_DIRECT
+    opt_frame();
+#endif
     u16 keyinput = 0x3ff;  // KEYINPUT: released bits are 1
     // the ARM7's button word (HW_BUTTON_XY_BUF, the system work area), OR-ed into KEYINPUT by PAD_Read: X bit 10, Y bit 11, debug bit 13
     // (released = 1); bit 15 clear = not folded
@@ -86,6 +90,13 @@ void frontend_frame(void) {
     u32 sk = scripted_keys();
     keyinput &= (u16)~(sk & 0x3ff);
     xy &= (u16)~(sk & 0x0c00);
+#ifdef N3DS_DIRECT
+    {
+        u32 p = (~keyinput & 0x3ff) | (~xy & 0x0c00), hidden = p & ~opt_keys(p);
+        keyinput |= (u16)(hidden & 0x3ff);
+        xy |= (u16)(hidden & 0x0c00);
+    }
+#endif
     *(u16 *)host_io(0x04000130) = keyinput;
     *(volatile u16 *)&gHostSysWork.buttonXY = xy;
 }

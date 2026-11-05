@@ -11,6 +11,9 @@
 
 #include "host.h"
 #include "host_mem.h"
+#ifdef N3DS_DIRECT
+#include "options_3ds.h"
+#endif
 #include "plat.h"
 #include "sys/CardCmd.h"
 
@@ -411,6 +414,9 @@ static void tp_sample(void) {
     int lx = 0, ly = 0, down = frontend_touch(&lx, &ly);  // the viewer's mouse
     for (int i = 0; i < sTouchCount; i++)                 // ACWW_TOUCH
         if (f >= sTouch[i].frame && f < sTouch[i].frame + sTouch[i].len) down = 1, lx = (int)sTouch[i].x, ly = (int)sTouch[i].y;
+#ifdef N3DS_DIRECT
+    opt_touch(&down, &lx, &ly);
+#endif
     if (down) raw = tp_raw(lx, ly);
     ((volatile u16 *)gHostSysWork.touchPanel)[0] = (u16)raw;  // HW_TOUCHPANEL_BUF
     ((volatile u16 *)gHostSysWork.touchPanel)[1] = (u16)(raw >> 16);

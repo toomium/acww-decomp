@@ -103,6 +103,9 @@ typedef struct Gpu2dLayers {
     Gpu2dMarginAffine margin[2];  // per engine, for this frame
     int iris;                     // the screen transitions' iris (gpu2d_iris) for this frame
     int menuWipe;                 // the menus' wipe (gpu2d_menu_wipe) for this frame
+    const uint32_t *optPic;       // the options page's picture (gpu2d_options) and its serial, for this frame
+    uint32_t optSerial;
+    int optPageY, optBtnY;
     Gpu2dBgAnchor bgAnchor[2];    // per engine (gpu2d_bg_anchor), for this frame
 #endif
 } Gpu2dLayers;
@@ -155,6 +158,12 @@ void gpu2d_iris(int progress);
 // pos - (a zigzag of 24 lines up and 24 down), drawn by the host over the whole wide screen; given by the game at its
 // V-blank, from the next frame on, kept while that window is on (-1 none)
 void gpu2d_menu_wipe(int pos);
+// the options page (modern/host/options_3ds.c): a 256x192 RGBA picture (0xRRGGBBAA; the page in lines 17-191, the pause
+// menu's button at (0, 0), 24x16), drawn over the bottom screen; serial changes whenever its pixels did (the host
+// uploads it then), pageY the page's offset downwards (0 in place, 192 or more not shown: it slides), btnY the button's
+// top line (GPU2D_NO_BTN none); from the next frame on, kept until changed. The picture must stay as it is until two more serials have been given.
+#define GPU2D_NO_BTN (-999)
+void gpu2d_options(const uint32_t *pic, uint32_t serial, int pageY, int btnY);
 // the UI elements' anchors (Gpu2dSprite.anchor): one for each of an engine's 128 OAM entries, given with the OAM the game
 // loads (0x400 bytes) at its V-blank; an entry keeps its anchor while OAM holds what it held then
 void gpu2d_obj_anchors(int engine, const void *oam, const uint8_t *anchors);

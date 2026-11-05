@@ -182,6 +182,187 @@ size, the fonts, the 2D pictures with text, the text boxes' widths. Done when a 
 saved, and every difference found is written here. **R6.3** More 3D pictures a second: pictures interpolated
 between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
 
+**R6.4 An options page in the pause menu** (the user, 2026-11-04: settings changed while playing, in the game's
+style, an entry at the top left of the pause menu; groups "Game" (60 fps, wide screen) and "Enhancements" (later,
+e.g. stacked fruit); as few game changes as possible, as much as possible by hooks). Planned, nothing done yet.
+
+What is there (read and checked 2026-11-04, the PC build, `tools/host_play_script.py menu` on a save from `save`):
+- The pause menu's tab bar is `MenuTabBar` (src/ov090/unk_ov090_022918e0.cpp), on the bottom screen at its top for
+  every tab; its OBJs at (0x80, slideY + 0x50), the tabs' tops at y = slideY - 15 (slideY 0 to 0x10 while it slides
+  in); seven tabs from x 0x33 every 0x19 (pockets, designs, fish, insects, chat, map, friends; `curTab` 0-6), the
+  close tab at 0xf3. In all seven, x 0-50 of the tab row is only the menus' dots: room for one more tab.
+- A touch there is no tab (`MenuTabBar_HitTestTouch`: x >= 0x35), but not nothing: in the designs tab the game
+  switched to its touch mode (the hand gone). So the host must keep such a touch from the game.
+- Keys: L and R go through the tabs (`execMain`, wrapping 0 <-> 6); in the chat tab L is also "Copy" (the
+  keyboard's label) and the tab shows a Select icon. No key of the pause menu is free.
+- Sounds (the tab bar's own, from the code): `Snd_PlaySe(1)` opening, 2 closing, 3 a tab change.
+- The fonts: `/font/fontA_{head,attr,img}.bin` (LZ77 in the ROM, unpacked by `File_LoadF`), loaded once by
+  `Text_InitSystem` into `gFontA` and kept: 224 glyphs, 16x16 cells, the codes ASCII from 0x20 to 0x7e, a glyph's
+  width in its table entry (about 5 pixels, letters about 10 high); the bitmaps a glyph after another,
+  cellWidth * cellHeight / 8 bytes, a row after another, the left pixel the highest bit (`GameFont_GetGlyphBitmap`,
+  `TextLabel`'s drawing, src/main/unk_020501d4.cpp). fontB is the same in 8x8.
+- Touches, real and `ACWW_TOUCH`, meet in `tp_sample` (pxi7.c); keys, real and `ACWW_KEYS`, in `frontend_frame`
+  (frontend.c). Both on the game's thread.
+- 60 fps: `interp_on` (gpu3d_pica.c, cached `ACWW_PICA_INTERP`) is read only on the game's thread (`g3p_between`,
+  `g3p_render`); core 2 gets the result in `sJob.den`. A list first drawn while it is off is never paired, so
+  switching on at any frame is safe; a plain variable set on the game's thread is enough.
+- The wide view is decided at the start (gpu3d_pica.c's pictures 512 or 256 wide, pica_display.c's VRAM or linear
+  memory, the stencil).
+- Per-frame state for core 2 goes with gpu2d.c's `Record` (`iris`, `menuWipe`: set by the game's thread, copied in
+  `record_start`, given to pica_display.c's `sLayers`); pica_display.c draws `iris(sw)` last on each screen.
+- Pockets are `u16 pockets[15]` (include/player/PlayerInventory.h): one item code a slot, no count.
+
+Decided (the user, 2026-11-04):
+- **O1: the page drawn by the host; the game only says what its pause menu does.** The entry, a tab-shaped button
+  with a gear, and the page are pica_display.c's quads over the bottom screen. The text is in the game's own font
+  (`gFontA`, read from memory; nothing allocated in the game's heaps), the colours as the menus'. The game keeps
+  running in its menu; while the page is open it gets no keys and no touch (but for the exceptions in WP6). Game
+  code: a few lines in one file under N3DS_DIRECT. Not taken: a menu of the game's own (a new
+  `MenuCtrl_RequestOpenNested` id and Proc).
+- **O2: wide screen "after a restart"** (shown so on the page). Live switching later perhaps (WP8).
+- **O3: no key of its own.** The page is one more tab, the leftmost: reached by a touch on its button or by L / R
+  as the other tabs, in the order options, pockets, designs, fish, insects, chat, map, friends, round. So L on the
+  pockets and R on the friends open it (instead of the game's wrap from one to the other), and on the page L goes
+  on to the friends, R to the pockets. Everything else L and R do stays the game's (chat's "Copy" is tab 4).
+- **O4: the button inside the DS's picture** at x 26-49, y slideY - 15 (the tabs' height, 16 lines; 24x16, one
+  tab's step left of the pockets' tab at 0x33): there with the wide view on and off and with `ACWW_3DS_SCALE`, no
+  anchor needed, and `ACWW_TOUCH` can hit it (DS coordinates).
+- Options stay `ACWW_*` variables (section 0): the page sets them (`setenv`) and writes their lines into acww.cfg;
+  no options system of its own. "60 fps" is `ACWW_PICA_INTERP`, "Wide screen" `ACWW_WIDE`.
+- **Changed 2026-11-05 (the user's points after WP7's screenshots): the page is a tab of the game's.** The page sat
+  over the last tab's menu, which kept running under it (its panel's corners showed), it appeared and vanished at
+  once, and its button was a flat yellow block. Now MenuTabBar knows one more tab, `N3DS_OPT_TAB` (15, beside the
+  game's 0-14; include/n3ds_ui.h), with no menu of the game's: `MenuTabBar_PrevTab(0)` and `NextTab(6)` give it (so L
+  on the pockets, R on the friends, also through the tab bar's own L / R), `MenuTabBar_HitTestTouch` gives it for the
+  button (x 26-49), and the tab menus then close as for any tab (their panel slides out, `onTabMenuClosed`). After the
+  game's pause (`updateOpenTabMenu`) `n3ds_menu_page` lets the page slide in; leaving it, the host gives the tab
+  (`n3ds_menu_step`): the game's `selectTab` at once, `onTabMenuClosed` once the page has slid out, as a tab's menu.
+  O1 holds otherwise (the host draws the page, the game's code changes in one file); O3's order holds, but the way in
+  is the game's, and **B on the page closes the pause menu** as on every other tab (WP6a had B close only the page).
+  The game's tabs are all unlit while the page is shown (their tiles and the base palette `menu/tag/obj.bpl`
+  reloaded); the button is lit then.
+
+Work packages. Each says what, where and when it is done. The checks: the direct build in Azahar, hidden and silent (the
+memory notes), on the SD card a save made by the PC build's `save` script and acww.cfg with the `menu` script's lines
+(`eval "$(python3 tools/host_play_script.py menu)"`, then `ACWW_KEYS=...` / `ACWW_TOUCH=...` lines, more keys appended
+for each check), `ACWW_FAST=1`, `ACWW_RTC="2026-04-01 12:00:00"`, `ACWW_EXIT_FRAME` (not `ACWW_HEADLESS`: the direct
+build hangs with it in Azahar). acww.cfg backed up before and put back after each run. The frames hold there too
+(checked 2026-11-04, the direct build of 2026-11-03 in Azahar, the `menu` script on a save from the PC build's `save`,
+B at 4800, 98 s): at 4100 the player still in the house, at 4450 the tabs sliding in, at 4500 and 4600 the pockets,
+at 4900 town again; the tab row's left part and the margins only the dots. Pictures by
+`ACWW_PICA_SHOT=<frame>,<frame>,...` (sdmc:/3ds/acww/screen<0|1>-<frame>.ppm; 1 the bottom screen). Every game file
+touched: `tools/host_objcmp.sh` shows its code unchanged without N3DS_DIRECT (32 and 64 bits), so the PC and plain 3DS
+builds don't change. New runtime code goes in one new file, `modern/host/options_3ds.c` with `options_3ds.h`, its body
+under `#ifdef N3DS_DIRECT` (configure_host.py compiles every file of modern/host/ in every build; no libctru in it, so
+not in `N3DS_NATIVE`). Changes to the shared runtime files (frontend.c, pxi7.c, gpu2d.c, pica_display.c, gpu3d_pica.c)
+only under N3DS_DIRECT.
+- **WP0 Ground truth: done 2026-11-04** (above; `tools/host_play_script.py menu`).
+- **WP1 The options' table and acww.cfg.** In options_3ds.c: a table of {group, label, ACWW_* name, values (0 / 1),
+  default, live or after a restart, apply function or none}, read from the environment at the first use;
+  `opt_get(i)`, `opt_set(i, v)` (a live option: setenv, then its apply function; one after a restart: only the value
+  kept for the page and acww.cfg, the environment left alone: `gpu3d_wide_wanted` reads `ACWW_WIDE` every frame, so a
+  setenv would switch half the renderer at once); `opt_save()` rewrites
+  `sdmc:/3ds/acww/acww.cfg` through `acww.cfg.tmp` and rename, changing only the lines of the options changed (the
+  first `NAME=` line; appended at the end if there is none) and keeping every other line byte for byte (comments,
+  the input scripts' long lines, the line ends). Whether sdmc's `rename` replaces an existing file is
+  **unverified**: if not, the .tmp written, acww.cfg renamed to .bak, the .tmp to acww.cfg, the .bak deleted; a
+  leftover .tmp at the start deleted, a .bak with no acww.cfg renamed back (in `host_plat_init`, before it is read).
+  A test hook, read once:
+  `ACWW_OPT_AT="frame:NAME=value;frame:open;frame:close"`, at those frames `opt_set` + `opt_save` as the page does,
+  or the page opened / closed (for WP5; open / close gone since 2026-11-05: the page is a game tab, opened by L on
+  the pockets, mask 200). Called once a frame from `frontend_frame` (frontend.c, under N3DS_DIRECT).
+  Done when acww.cfg with a comment line, a 10 KB `ACWW_KEYS` line and no `ACWW_PICA_INTERP` line, after a run with
+  `ACWW_OPT_AT="600:ACWW_PICA_INTERP=0"`, differs from before only by the appended `ACWW_PICA_INTERP=0` (diff); a
+  second run with `=1` changes that line only (the rename over an existing file: this run shows it); a run with
+  `ACWW_OPT_AT="600:ACWW_WIDE=0"` writes `ACWW_WIDE=0` while its shots stay wide, and the next run starts narrow.
+  (With no acww.cfg, `opt_save` creates one with the changed lines.)
+- **WP2 60 fps live.** gpu3d_pica.c: `interp_on` returns a variable (from `ACWW_PICA_INTERP` at the first call, as now)
+  and a new `g3p_set_interp(int)` sets it; it is the option's apply function. Both on the game's thread (no lock). Done
+  when, with the `menu` script's save in town (no Y), `ACWW_OPT_AT="5000:ACWW_PICA_INTERP=0;6000:ACWW_PICA_INTERP=1"`,
+  Left or Right held from 4900, 5100 and 6100 for 12 frames each (the player walks) and `ACWW_PICA_SHOT` at each of
+  those frames (a list: `4900,4901,...`; the files `screen1-<frame>.ppm`): the town's 3D (the bottom screen) differs
+  from frame to frame before 5000 and after 6000, and between them only every second or third frame (the game's own
+  pictures, docs/3ds.md log 2026-10-29: every third in town); no shot broken (the frames right after each switch looked
+  at).
+- **WP3 The game's hook.** `include/n3ds_ui.h` (beside `gN3dsTalkBgShown`) declares the calls; src/ov090/
+  unk_ov090_022918e0.cpp makes them under N3DS_DIRECT:
+  - `n3ds_menu_state(open, visible, slideY, curTab, lrSwitchEnabled)`: from `onCreate` (open 1), `onDelete`
+    (open 0), and each frame at the end of `execMain` and of `execTransition` (slideY grows in `execMain` while the
+    tabs slide in, shrinks in `stateSlideOut` when B closes the menu: the tabs leave upwards; `lrSwitchEnabled` at
+    `execMain`'s end is what its L / R check used). `onDraw` returns early while hidden, so it is no place for it.
+  - `n3ds_menu_font(header, glyphs, bitmaps)`: `gFontA`'s three pointers, from `onCreate` (`GameFont` is opaque to
+    C: the host gets the pointers, not the object).
+  - `int n3ds_menu_sound(void)`: a sound the page asks for (-1 none), played by `execMain` with `Snd_PlaySe`: 3 for
+    a tab change (the tab bar's own), 0x3b the cursor moved and 0x27 a button pressed (`ChoiceSliderWindow`'s,
+    src/main/unk_020a8c9c.cpp; by ear in WP7).
+  The host's side (options_3ds.c) keeps them. Done when a temporary print in the host shows open / closed,
+  slideY going 0 to 16 and back to 0 after B (the `execTransition` call), curTab 0 to 6 with the `menu`
+  script and R pressed every 200 frames from 4600, and
+  host_objcmp shows the game file's code unchanged without N3DS_DIRECT.
+- **WP4 Text in the game's font.** In options_3ds.c: `text(rgba, w, h, x, y, "string", colour)` from WP3's
+  pointers: per character the glyph whose code (`GameFontGlyph.code`) is the ASCII code (search the table, 224
+  entries; none: skip), its width from the entry, its 16x16 bitmap (cellWidth * cellHeight / 8 bytes a glyph, a row
+  after another, the left pixel the highest bit), one pixel between letters as the game's `letterSpacing`
+  (**unverified**: compare). Done when a test option (`ACWW_OPT_TEXT=file.ppm`, written the first time the menu
+  opens) has "Options", "Game", "60 fps", "Wide screen", "On", "Off" readable, and their letters look as "Town Map" in
+  the map tab's screenshot (the same shapes and gaps).
+- **WP5 The page and button on the screen.** The page's picture (RGBA, 256x192, drawn by the game's thread in
+  options_3ds.c when it changed) and a counter of its changes go to core 2 with the frame: in gpu2d.c's `Record`
+  as `iris` (set on the game's thread, copied in `record_start`, given to `sLayers`), two pictures as the records
+  are two. pica_display.c: one texture (RGBA8, 256x256, linear memory, uploaded only when the counter changed),
+  drawn on the bottom screen after `screen_compose` and before `iris`, in the DS's coordinates as screen_compose
+  places the DS's picture (it is moved in the wide view): the page over y 17-191 (the other tabs' panels' place;
+  check against the pockets' screenshot), the button at O4's place, both only while the menu is visible
+  (WP3). Done when `ACWW_OPT_AT="4600:open"` with the `menu` script shows the page over the pockets in
+  `ACWW_PICA_SHOT` at 4700, the button beside the pockets' tab every 2 frames from 4400 to 4460 (sliding in with the
+  tabs) and gone once the menu is closed (B at 4800: the tabs slide out upwards, shots at 4805-4820, town at
+  4900), and `ACWW_FPS=1` in town as before with the
+  menu closed.
+- **WP6a Input: touch and the page.** Keys: in `frontend_frame` (frontend.c) after the scripted keys are merged in;
+  touch: in `tp_sample` (pxi7.c) after `ACWW_TOUCH` is merged in; both under N3DS_DIRECT, both asking options_3ds.c.
+  Only while the menu is open (WP3):
+  - Page closed: a touch inside the button's box opens the page (sound 3).
+  - Page open: the game gets no keys and no touch, except a touch on another tab (x >= 0x35 in the tab row): it
+    closes the page and goes to the game (which changes the tab as always). Up / Down a row (0x3b), Left / Right or
+    A changes the value (0x27), a touch on a row's value changes it, B or a touch on the button closes the page (3).
+    acww.cfg is written when the page closes, if anything changed. The menu closing (open 0) closes the page.
+  - A key or touch the page used reaches the game only once it is released, also when the page closed meanwhile
+    (B held 6 frames closes the page on the first; the game must not see the other 5 as a press, or it closes the
+    pause menu too); a touch on the button the same.
+  Done when, with the `menu` script: a touch on the button (`4600:6:37,8`) opens the page (shot), A at 4650 (the
+  first row, "60 fps") switches it off, B at 4700 closes it; the pockets didn't react (the same hand, no touch mode,
+  the menu still open: shots before and after, and at 4800); acww.cfg's line changed; a touch on the map tab with the
+  page open closes it on the map.
+- **WP6b Input: L / R (O3).** In the same filter: page closed, L with curTab 0 and lrSwitchEnabled, or R with curTab
+  6 and lrSwitchEnabled, opens the page (3) and the key doesn't reach the game. Page open: L / R close it, and the
+  host lets L through if the tab beneath is the pockets (the game goes on to the friends) or R if it is the friends
+  (to the pockets), else nothing (from another tab by touch: back to that tab, shortcut). A key let through goes to
+  the game from the frame the page closes on, as a fresh press; one not let through stays masked until released
+  (WP6a). Done when, with the `menu` script:
+  L at 5000 on the pockets opens the page, L at 5200 goes to the friends, R at 5400 back to the page, R at 5600 to
+  the pockets; R at 5800, 6000, 6200, 6400, 6600 to the map tab, L at 6800 to the chat tab (as the game does). A
+  shot 100 frames after each press.
+- **WP7 The page's look.** As the other tabs' pages (the screenshots of WP0): a rounded panel in a colour set of its
+  own (each tab has one: orange, red, blue, pink, purple, green, yellow; e.g. a light grey), the title in a label as
+  "Town Map" / "Friend Roster", the groups' headings, the rows: label left, "On" / "Off" right as the game's
+  choices, the chosen row marked (the menus' hand if its tiles can be taken from OBJ VRAM, else a frame), "after a
+  restart" under the wide screen, the group "Enhancements" with "nothing yet" while empty. The button a tab as the
+  others (frame, fill, a gear drawn for it), lit while the page is open (the tab beneath stays lit too: shortcut).
+  The sounds of WP3 listened to. Done when the user has looked at the screenshots and said it fits.
+- **WP8 Wide screen live (later, optional).** List every user of `gpu3d_wide_wanted`, `gpu3d_wide` and sScreenMode;
+  allocate for the wide view always in the direct build; the rest from a flag taken once a frame. Done when
+  `ACWW_OPT_AT` switching `ACWW_WIDE` gives `ACWW_PICA_SHOT`s as a run started with that value (town, the menus, a
+  text box); otherwise it stays "after a restart" and the reason goes in the log.
+- **WP9 The enhancements' pattern (later).** A flag array for the game (`include/n3ds_options.h`, e.g.
+  `gN3dsOpt[N3DS_OPT_STACK_FRUIT]`), set by the options' table, read by the game code under N3DS_DIRECT where the
+  enhancement changes it; one table row and one hook per enhancement, each its own WP. Stacked fruit has no room in
+  a pocket (`u16 pockets[15]`, no count): it needs item codes of its own, which a DS and the PC build don't know; that
+  WP must say what such a save does there and when the option is switched off with stacks in the pockets.
+- **WP10 The log and hardware.** The log's entry with what was checked; the user's run on hardware (`ACWW_FPS=1`
+  with the menu open and closed, the touch on the button, L / R, acww.cfg after a switch).
+
+Order: WP1 and WP3 first (independent), then WP2 and WP4, WP5, WP6a, WP6b, WP7; WP8 and WP9 when the page works.
+
 ## 4. Open questions (unverified)
 
 - How much of NNS_G3d's time is its own CPU work (animations, matrix building), which level B keeps.
@@ -958,3 +1139,65 @@ between the game's (the game's loop is 20 Hz itself); plan D in Next steps.
   the insect book open): engine B's OBJ tiles 137-139 (the 4th tab, 2D mapping) held pieces of another picture, so
   the renderers drew what was there. Fixed on `3ds` (e96d64c6, merged in). Checked (the PC build, the pockets open, R
   through all 8 tabs): each tab shows its light picture when active. The direct build not looked at with it.
+- 2026-11-04: R6.4 planned, an options page in the pause menu (the user: drawn by the host, wide screen after a
+  restart, no key of its own: a tab reached by touch or L / R). What was checked for it (the PC build, the new `tools/host_play_script.py menu` on a save
+  from `save`: the player out of the house at about frame 4100, Y at 4400 opens the pockets; screenshots of all seven
+  tabs, R through them) is in R6.4: the tab row free at x 0-50 in every tab, a touch there switching the game to its
+  touch mode, L and R the tab bar's (and L chat's "Copy"), the font's codes ASCII (fontA from the ROM, unpacked), the
+  interpolation's switch read only on the game's thread. Nothing built yet.
+- 2026-11-04: R6.4 WP1-WP3 written (modern/host/options_3ds.c/.h, `g3p_set_interp`, the `n3ds_menu_*` calls in
+  MenuTabBar, `opt_frame` in `frontend_frame`, acww.cfg recovery in `host_plat_init`). The direct 3DS build and the PC
+  build compile. **Not run yet** in Azahar: the WP1 acww.cfg diffs, WP2 shots and WP3 prints are still to do; the
+  host_objcmp check of the game file without N3DS_DIRECT too. `opt_save` moves acww.cfg to .bak first, as rename over
+  an existing file is unverified.
+- 2026-11-04: R6.4 WP4 and WP5 written and run (the direct build in Azahar, hidden, the `menu` script, `ACWW_OPT_AT=4600:open`).
+  WP4: `text()` in options_3ds.c draws gFontA's glyphs (advance = glyph width + 1, **unverified** against the game's
+  letterSpacing by a side-by-side shot); `ACWW_OPT_TEXT=file.ppm` shows "Options", "Game", "60 fps", "Wide screen", "On",
+  "Off" readable in the game's letter shapes. WP5: `gpu2d_options` (gpu2d.c Record -> Gpu2dLayers) gives one 256x192 RGBA
+  picture (button at (0, 0), page in lines 17-191, two buffers, redrawn only when the page / a value / the cursor
+  changed) and pica_display.c's `options_page` uploads it when its serial changes and draws it after `screen_compose` on
+  the bottom screen. Shots 4440-4900: the button slides in left of the pockets' tab with the tabs, the page shows over the
+  pockets at 4700, the button follows the tabs out at 4810 (the page itself does not slide: it vanishes only when the menu
+  is gone, 4900 town), no page without the menu. Not checked: `ACWW_FPS` in town, host_objcmp of the game file, the
+  `ACWW_PICA_SCREEN=0` path (no page there). The cursor row is drawn (row 0) but nothing moves it yet (WP6).
+  Test setup: the old `menu.sav` on the SD card was not a `save` result (Y opened nothing, also in the PC build); a
+  fresh one from the PC build's `save` script (38 s) works.
+- 2026-11-04: R6.4 WP6a and WP6b written and run (the direct build in Azahar, hidden, the `menu` script, `menu.sav`).
+  `opt_keys` (frontend_frame) and `opt_touch` (tp_sample) in options_3ds.c; keys the page used stay hidden from the game
+  until released. Checked with shots: a touch on the button (`4600:6:37,8`) opens the page; A switches "60 fps" off; B
+  closes the page and the pause menu stays (the pockets as before); L on the pockets opens the page, L on it goes to the
+  friends, R there to the page, R to the pockets, then R through designs, fish, insects, chat, map, and L from the map to
+  chat: as the game does. **Found:** `lrSwitchEnabled` is no test for L / R: the tabs' own menus (e.g. PocketMenu) switch
+  tabs on L / R and the tab bar's flag is 0 there; so the page opens on L (curTab 0) / R (curTab 6) whenever the menu is
+  open, also with a dialog open in the tab (shortcut: the game would ignore the key there). Not run: a touch on a row
+  or on another tab with the page open, the touch in the tab row left of the button, `ACWW_FPS`. `ACWW_KEYS` masks are
+  hex (L 200, R 100, Y 800).
+- 2026-11-04: R6.4 WP7 written and run (Azahar, `ACWW_OPT_AT=4600:open`, shots 4550 / 4680 / 4780): the page a rounded panel
+  in a slate blue-grey of its own (light edge, band, "Options" in a white label, a pale inner panel), the groups' headings
+  "Game" and "Enhancements" ("nothing yet"), rows with On / Off right, the cursor row a rounded bar, "* after a restart"
+  at the bottom; the button lit (pale yellow) while the page is open. **Not yet looked at by the user** (WP7's "done");
+  the sounds (0x3b, 0x27, 3) not listened to; the menus' hand as the cursor not done (a bar instead).
+- 2026-11-05: R6.4, the user's three points after WP7 (the page over the last tab's menu, no slide, the yellow button):
+  the page is a tab of the game's now (R6.4 "Changed 2026-11-05"). Measured first (the PC build, the `menu` script on
+  a fresh `save` result, R on the pockets, a shot every frame): a tab's panel slides out in 3 game frames (64, 128,
+  192 lines down, linear), then a pause of about 9 game frames (`sTabSwitchCooldown`), the next slides in over 4
+  (108, 48, 12, 0: 192 * p * p, MenuSlide's quadratic), a game frame every 3 frames here. The page does the same, a step
+  per `execMain`. The button a tab as the game's: the pockets' tab's frame (24x16, rounded, 1-pixel outline), a 12x10
+  gear in the outline's colour; unlit dark slate on the page's blue-grey, lit a light outline on the cream all lit tabs
+  share (`fbfbdb`). Checked in Azahar (the direct build, hidden, a save from the PC `save` script, shots every frame):
+  L on the pockets: the pockets slide out, the pause, the page slides in (offsets 108 / 48 / 12 / 0 measured), the
+  pockets' tab and all others unlit, the button lit; Down and A switch "Wide screen" (acww.cfg: only `ACWW_WIDE=0`
+  appended); R slides the page out (64 / 128 / gone) and the pockets in; L again and B: the page slides out, the tab
+  bar up, the menu closes. Touch: the button with the pockets opened by Y (button mode): the first touch only switches
+  the game to its touch mode, the second opens the page, as a touch on a game tab does there (PC build, the designs'
+  tab: the same); a touch on the "60 fps" row switches it (acww.cfg: `ACWW_PICA_INTERP=0` appended); a touch on the
+  map's tab with the page open: the page out, the map in. The game file's code is unchanged without N3DS_DIRECT
+  (`host_objcmp`, 32 and 64 bits; first run of it for this file). The PC build against HEAD (both with wgpu-native:
+  without it the shots differ by renderer), the `save` script: save file, sound and shots at 3000 / 12000 / 23000 /
+  34000 the same (pxi7.c's `tp_sample` changed outside N3DS_DIRECT). Shortcuts: the page doesn't take Y / X / Select
+  to the pockets / map / chat as the tabs' menus do; nothing ticks `MenuCtrl_TickForceClose` while it is open; the
+  hand in the tab row (key mode) can't reach the button; leaving by L / R has no cooldown (the host gives the tab, not
+  `PrevTab` / `NextTab`): the next tab's menu opens as soon as the page has slid out. Still open: the user's look at the new shots, the
+  sounds listened to, the hand as the cursor, and (the user, 2026-11-05, for the next session) while the pause menu
+  slides in and out the options button doesn't vanish at the DS picture's old edge as the other tabs do (the cause
+  **unverified**: the host draws it over the whole wide screen, not cut at the DS's picture as the tabs' OBJs are).

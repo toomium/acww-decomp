@@ -33,6 +33,15 @@
 #include "proto/main/unk_0209eb94.h"
 #include "proto/main/unk_020b7d84.h"
 #include "proto/ov090/unk_ov090_022918e0.h"
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+#include "proto/main/unk_020501d4.h"
+#include "text/Unk_02050288.h"
+#define N3DS_MENU_STATE() n3ds_menu_state(1, visible, slideY, curTab)
+#define N3DS_IS_TAB(i) ((i) <= 6 || (i) == N3DS_OPT_TAB)  // (the options page: one more tab)
+#else
+#define N3DS_IS_TAB(i) ((i) <= 6)
+#endif
 
 extern "C" {
 
@@ -100,6 +109,13 @@ BOOL MenuTabBar::onCreate() {
     MenuCtrl_ClearSavedSlot();
     Snd_BeginMenuDuck();
     MenuCtrl_SyncFromInputMode();
+#ifdef N3DS_DIRECT
+    {
+        GameFontDesc *fd = (GameFontDesc *)&gFontA;
+        n3ds_menu_font(fd->header, fd->glyphs, fd->bitmaps);
+    }
+    N3DS_MENU_STATE();
+#endif
     return TRUE;
 }
 
@@ -108,6 +124,9 @@ BOOL MenuTabBar::onDelete() {
     releaseResources();
     Snd_EndMenuDuck();
     MenuCtrl_ClearSyncMsgMenu();
+#ifdef N3DS_DIRECT
+    n3ds_menu_state(0, 0, 0, 0);
+#endif
     return TRUE;
 }
 
@@ -140,6 +159,9 @@ BOOL MenuTabBar::execTransition() {
                                            &MenuTabBar::stateSlideOut};
     cancelVramTasks();
     (this->*tbl[transitionState])();
+#ifdef N3DS_DIRECT
+    N3DS_MENU_STATE();
+#endif
     return TRUE;
 }
 
@@ -189,6 +211,16 @@ BOOL MenuTabBar::execMain() {
             Snd_PlaySe(3);
         }
     }
+#ifdef N3DS_DIRECT
+    N3DS_MENU_STATE();
+    {
+        // leaving the options page as a tab's menu does: selectTab at once, onTabMenuClosed once it has slid out
+        int se, closed, tab = n3ds_menu_step(&se, &closed);
+        if (se >= 0) Snd_PlaySe(se);
+        if (tab >= 0) selectTab((u32)tab);
+        if (closed) onTabMenuClosed();
+    }
+#endif
     return TRUE;
 }
 
@@ -216,14 +248,14 @@ void MenuTabBar::selectTab(u32 idx) {
         Snd_PlaySe(2);
         data_021c1b3c->mixer.endMenuDuck();
     } else {
-        if (idx <= 6 && old <= 6) {
+        if (N3DS_IS_TAB(idx) && N3DS_IS_TAB(old)) {
             Snd_PlaySe(3);
         }
     }
     if (idx == 0) {
         MenuCtrl_ClearSavedSlot();
     }
-    if (old <= 6 && idx <= 6) {
+    if (N3DS_IS_TAB(old) && N3DS_IS_TAB(idx)) {
         lrSwitchEnabled = 1;
     }
 }
@@ -250,6 +282,9 @@ u8 MenuTabBar::onTabMenuClosed() {
     case 12:
     case 13:
     case 14:
+#ifdef N3DS_DIRECT
+    case N3DS_OPT_TAB:
+#endif
         mainState = 1;
         break;
     }
@@ -313,6 +348,11 @@ void MenuTabBar::updateOpenTabMenu() {
             MenuCtrl_RequestOpenNested(0x2b);
             MenuCtrl_SetMode(curTab);
             break;
+#ifdef N3DS_DIRECT
+        case N3DS_OPT_TAB:
+            n3ds_menu_page();
+            break;
+#endif
         case 7:
             break;
         }
@@ -367,6 +407,11 @@ extern "C" s32 MenuTabBar_HitTestTouch() {
     if (lim > 0x10) {
         return -1;
     }
+#ifdef N3DS_DIRECT
+    if (v >= 26 && v < 50) {  // the options page's button (docs/3ds-real-port.md R6.4 O4)
+        return N3DS_OPT_TAB;
+    }
+#endif
     if (v < 0x35) {
         return -1;
     }
@@ -394,7 +439,18 @@ extern "C" s32 MenuTabBar_GetTabX(s32 a) {
     return a * 0x19 + 0x3f;
 }
 
+// (the direct build: the options page between the friends and the pockets)
 extern "C" u8 MenuTabBar_PrevTab(u8 a) {
+#ifdef N3DS_DIRECT
+    if (a == N3DS_OPT_TAB) {
+        sTabSwitchCooldown = 10;
+        return 6;
+    }
+    if (a == 0) {
+        sTabSwitchCooldown = 10;
+        return N3DS_OPT_TAB;
+    }
+#endif
     if (a <= 6) {
         sTabSwitchCooldown = 10;
         if (a == 0) {
@@ -407,6 +463,14 @@ extern "C" u8 MenuTabBar_PrevTab(u8 a) {
 
 extern "C" u8 MenuTabBar_NextTab(u8 a) {
     sTabSwitchCooldown = 10;
+#ifdef N3DS_DIRECT
+    if (a == 6) {
+        return N3DS_OPT_TAB;
+    }
+    if (a == N3DS_OPT_TAB) {
+        return 0;
+    }
+#endif
     if (a <= 6) {
         if (a == 6) {
             return 0;
@@ -438,6 +502,16 @@ void MenuTabBar::showTab(u32 idx) {
             loadedTab = idx;
         }
     }
+#ifdef N3DS_DIRECT
+    // the options page: every tab of the game's unlit (the host lights its button): their tiles and the base palette
+    // (a lit tab's obj%d.bpl changes palette 15, which all the tabs use)
+    if (idx == N3DS_OPT_TAB && idx != loadedTab) {
+        vramTasks[0].requestChars(commonObjChars, 8, 0x80, 0x80, 0xbf);
+        File_LoadToBuffer("menu/tag/obj.bpl", tabPalette, 0x20);
+        vramTasks[2].requestPalette(tabPalette, 8, 0xf);
+        loadedTab = idx;
+    }
+#endif
 }
 
 void MenuTabBar::requestSaveOnClose() { saveState = 1; }
