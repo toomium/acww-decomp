@@ -1229,3 +1229,13 @@ Order: WP1 and WP3 first (independent), then WP2 and WP4, WP5, WP6a, WP6b, WP7; 
   each in the shots; after R the page has slid out at 6609 and the pockets slide in from 6632 (about 8 game frames
   of pause, as the game's own tab change measured 2026-11-05); the forced close took 54 game frames (`sForceCloseDelay`
   0x37) and the menu was closed at 7519. The game file's code unchanged without N3DS_DIRECT (`host_objcmp`).
+- 2026-11-06: R6.4, still open after today: (1) the menus' hand as the page's cursor (a bar today). Where its pixels are:
+  the menus' hand is a `HandCursor` (include/ui/HandCursor.h, src/main/unk_0208d64c.cpp / unk_0208d538.cpp), its
+  cells in main's static tables (`gSpriteSeqTable5b0c[sHandCursorAnimSeqIds[anim]]`, `data_020d5b0c`, the frames'
+  `GXOamAttr`); the tiles they name are loaded into the sub engine's OBJ VRAM by a loader not found yet (not the
+  tab bar's 0x80-0xbf, not the tab menus' 0xc0 and up: so probably a common set below 0x80, **unverified**), and
+  whether they stay there while the page is shown (no tab menu then) is **unverified**. A hand the game draws would
+  be under the page (pica_display.c draws it after the screen), so the host must draw it from those tiles. (2) The
+  key-mode hand in the tab row can't reach the button: the tabs are hand targets in five menus (the pockets ov096
+  0x19-0x20, the designs ov121 0x10-0x17, the map ov118, ov095, the fish ov114), each needing a target for it. (3) The
+  sounds (3, 0x3b, 0x27) not listened to (the test runs are silent). (4) The user's look at the page.
