@@ -1239,3 +1239,67 @@ Order: WP1 and WP3 first (independent), then WP2 and WP4, WP5, WP6a, WP6b, WP7; 
   key-mode hand in the tab row can't reach the button: the tabs are hand targets in five menus (the pockets ov096
   0x19-0x20, the designs ov121 0x10-0x17, the map ov118, ov095, the fish ov114), each needing a target for it. (3) The
   sounds (3, 0x3b, 0x27) not listened to (the test runs are silent). (4) The user's look at the page.
+- 2026-11-06: WP9 stacked fruit, what the code says (read, nothing built). Fruit is 0x1518-0x151c (`Item_IsFruit`,
+  `Item_MakeFruit`, src/main/unk_0204a780.cpp); 0x151d-0x151e are saplings (`StockList_AddFromRange`). The game already
+  has a stack: paper, the count in the code's low 2 bits (0x1000-0x10ff); `Unk_02061e0c_Conv` (src/main/unk_02061478.cpp)
+  maps it to its info record, `ItemInfo_GetPrice` multiplies by the count, `PocketMenu::writeLetterOnPaper` (ov096)
+  takes one and writes count-1 back. Every item info field (name from dma.bin, price, kind, class, icon index `+2`,
+  holdable) comes from the lookups in that file, which clamp `id & 0xfff` to record 0x56d: class-1 codes 0x156e-0x1fff
+  have no record and no range check found in src/ (grep of 0x156e-0x1fff; **unverified** that none is built at run time).
+  `Catalog_GetBit` returns 0 for codes outside its ranges, so a new code can't write past the catalog. Picking up:
+  `PlayerActor_PickUpItemUpdateState` (ov004) gates on `Pocket_FindEmpty() == -1` (the "pockets full" swap menu), then
+  `Pocket_AddFoundItem` -> `Pocket_SetItem` (src/main/unk_02098e90.cpp); `setupPickUpReach` / `SetupPickUpItem` gate the
+  same way indoors. Literal fruit ranges the stack codes would miss: ov096 pocket action kind 7, ov079 villager food,
+  ov098, ov003, planting in unk_02041e00 (`sFruitSaplings`), `Pocket_CountKind` (villagers' "bring me fruit"). There is
+  no `include/n3ds_options.h` yet; options_3ds.c has the table rows (`sOpts`) with an apply callback. What a DS or PC
+  build shows for a stack code (record 0x56d) and how a stack looks on the ground: **unverified**.
+- 2026-11-06: WP9 stacked fruit written and run (the direct build in Azahar, hidden, `menu.sav`, the `menu` script, a
+  temporary `ACWW_OPT_AT` hook setting pockets / calling `Pocket_AddFoundItem` / printing the pockets and prices,
+  removed again). The option: `ACWW_STACK_FRUIT` (default 0), a row "Enhancements / Stacked fruit" on the options page
+  (live; the game asks `n3ds_stack_fruit()`). `include/n3ds_options.h`: the codes 0x1570 + f * 8 + n - 2 (n 2-9, f the
+  fruit 0-4: 0 apple, 1 orange as the balloons show) and their helpers. The game, all under N3DS_DIRECT: the item info
+  lookups give a stack its fruit's record (`n3ds_item_record` before the 0x56d clamp, 7 places in unk_02061478.cpp, 2
+  in unk_02062530.cpp: name, icon, kind, holdable, the model on the ground); `Item_GetPrice` = the fruit's (with Nook's
+  local-fruit rule) times n; `Pocket_AddFoundItem` puts a fruit onto a stack (`Pocket_FindFruitStack`: same fruit, under
+  9, pocket flags 0, stacking on, not online); the "pockets full" tests of picking up (`FieldAction_Add` outdoors, which
+  decides fieldAnswerKind 3 / 4; `PlayerActor_PickUpItemUpdateState` indoors) let a fruit through when a stack has room;
+  `Pocket_GetItem` gives one fruit of a stack and `Pocket_RemoveItem` leaves the rest (the NPCs' "give me an item"
+  flows); the pocket menu (ov096): `mergeItems` makes stacks (a fruit or stack dropped onto one of its kind, the rest
+  over 9 stays in the hand's pocket, as the turnips' 0x1531-0x153a do), dropping on the ground drops one fruit and
+  leaves the rest (`requestDropItem`, `PocketMenu_KeepFruitRest` at the four places a drop succeeds), no stack into a
+  letter (the hand goes back); burying one fruit of a stack (ov098 `actionBuryItem` / `mainAct2E`: a tree, as a fruit);
+  a villager's errand that takes a pocket's item (`onDeliveryItemPicked` kind 10, unk_0201c050) takes one fruit; Nook's
+  sell menu (ov050 `handleSellMenu`) takes chosen items whole from `MenuCtrl_GetChosenItems` and prices them with
+  `Item_GetPrice`, so a stack sells whole at n times (read, not run); the balloon says "apple x9" (ov094). Checked: `found` x3 onto a stack of 8 and a single
+  apple gives 9 and 3; the pocket menu shows apple icons and "apple x9"; a touch drag of an apple onto the stack of 3
+  gives 4 (13 apples before and after); "Drop on Ground" on the 9 leaves 8 and one apple on the ground, B on it gives 9
+  again; with all 15 pockets full (8 apples and 14 oranges) the apple is picked up onto the stack (before the
+  `FieldAction_Add` change: "Oh, I'm carrying too much!"); option off: found apples go into empty pockets, a drag of an
+  orange onto an orange merges nothing; prices (Item_GetPrice): apple 2000, orange 400 (the town's fruit), 8 apples
+  16000, 9 oranges 3600. The 10 game files compile to the same code without N3DS_DIRECT (host_objcmp, -m32 / -m64).
+  **Not run:** selling at Nook's, burying, giving to an NPC (Wendell's food, Blathers, a villager's errand), the
+  dresser, a letter, the key-mode merge (A, the cursor), a stack dragged out of the menu onto the field (the hand's
+  drop: `dropHeldItem` and `mainAct28`'s other branch; a drag to the screen's top edge put it back, the drop target not
+  found). **Known gaps:** a villager who buys or swaps a pocket item (`buyItemFromPlayer`, `swapItemWithPlayer`,
+  unk_0201c050) looks for it with `Pocket_FindItem`, which matches codes exactly: with only a stack of that fruit the
+  deal finds nothing (nothing lost; what the talk then does **unverified**); an NPC that puts his reward into the freed pocket finds none when one fruit of a stack went; the
+  "pockets full" swap menu (`MenuCtrl_OpenPocketsFullPickUp`) can put a stack on the ground (it is drawn and picked up
+  as a fruit there, **unverified**); dragging a stack onto the player (kind 1) does nothing. A save with stacks on a DS
+  or the PC build shows record 0x56d's item for them (**unverified** which); a visitor's pockets reaching a DS host
+  over wireless is not prevented (stacking only stops while online).
+- 2026-11-06: WP9 stacked fruit, the user's two additions (run in Azahar as before, the temporary hook removed again).
+  (1) The count in the icon: ov094 `InventoryItemGrid_StackIcon` copies a stack's icon (the top tiles at +0, the
+  bottom at +0x400, as the icon pages hold them) into a static buffer and draws a light 3x5 digit in a dark frame into
+  its bottom right corner (x 11-15, y 9-15); used by both ways an icon is loaded (`InventoryItemGrid_LoadSlotIcon`
+  direct, `InventoryItemGrid_SetSpriteItem` -> `UploadIcon`, which copies it at once). The colours from the icon
+  palettes (menu/icon/b_obj_itm.bpl, read from the ROM: 8 palettes loaded as OBJ palettes 7-14, the icons use 7-13):
+  0xf is the dark outline (48,40,32) in all of them, 0xd a light grey (224) in all but palette 7, whose white is 9.
+  (2) "Take One": `addItemOptions` (ov096) adds a row of its own after "Drop on Ground" with the popup's
+  `addCustomRow` (text "Take One", no message file needed), action 0x23 (the game's are 0-0x21, 0x22 "Never Mind"),
+  only for a stack and while an empty pocket exists (`PocketMenu_FindEmptyPocket`); `runChosenAction` runs
+  `PocketMenu_TakeOneFruit` for it: the rest stays, one fruit flies into the empty pocket (`PocketMenu_FlyItemTo`, as
+  `actionTakeAttachment` does). Checked: the icons of 9 apples, 3 apples and 5 oranges show 9, 3, 5, readable (shot
+  zoomed); the popup on the 3 reads "Drop on Ground / Take One / Never Mind"; Take One leaves 2 (the icon then shows 2)
+  and puts an apple into the first empty pocket (13 apples before and after); with all 15 pockets full the popup has
+  no "Take One". ov094, ov096 and unk_02098e90 compile to the same code without N3DS_DIRECT (host_objcmp). Not run:
+  the key-mode popup (A on a stack), the other menus that use the same icon grid (the dresser, Nook's sell menu).

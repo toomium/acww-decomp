@@ -1,4 +1,5 @@
 #include "types.h"
+#include "n3ds_options.h"
 #include "game/Unk_020dd30c_Buf.h"
 #include "talk/MsgStringBase.h"
 #include "talk/MsgStringAttr.h"
@@ -127,6 +128,9 @@ extern "C" void ItemInfo_CountHoldable();
 
 static inline u8 *Unk_02061e0c_Lookup(u32 v) {
     u32 i = v & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     return (u8 *)func_0206d86c(func_0206d79c(gItemInfo), i);
 }
@@ -152,6 +156,9 @@ extern "C" u32 ItemInfo_GetPrice(u16 *p);
 
 static inline u8 *Unk_02062024_Lookup(u32 v) {
     u32 i = v & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     return (u8 *)func_0206d86c(func_0206d794(gItemInfo), i);
 }

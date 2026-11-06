@@ -21,6 +21,7 @@ static void apply_interp(int v) { g3p_set_interp(v); }
 static Option sOpts[] = {
     {"Game", "60 fps", "ACWW_PICA_INTERP", 1, 1, apply_interp},
     {"Game", "Wide screen", "ACWW_WIDE", 1, 0, 0},  // read every frame by gpu3d_wide_wanted: only after a restart
+    {"Enhancements", "Stacked fruit", "ACWW_STACK_FRUIT", 0, 1, 0},  // read by the game (n3ds_stack_fruit)
 };
 #define NOPT ((int)(sizeof sOpts / sizeof *sOpts))
 
@@ -38,6 +39,9 @@ static void init(void) {
 int opt_count(void) { return NOPT; }
 const Option *opt_info(int i) { return &sOpts[i]; }
 int opt_get(int i) { init(); return sVal[i]; }
+
+// (include/n3ds_options.h) the game's view of the enhancements' rows
+int n3ds_stack_fruit(void) { return opt_get(2); }  // (sOpts[2]: "Stacked fruit")
 
 void opt_set(int i, int v) {
     init();
@@ -223,8 +227,6 @@ static void draw_picture(uint32_t *px) {
         text(px, PH, 238 - text(0, 0, 0, 0, v, 0), y, v, ink);
         y += 18;
     }
-    text(px, PH, 16, y, "Enhancements", head);  // (none yet: WP9)
-    text(px, PH, 22, y + 18, "nothing yet", head);
     if (restart) text(px, PH, 16, 164, "* after a restart", head);
 }
 
