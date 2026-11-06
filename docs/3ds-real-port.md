@@ -1217,3 +1217,15 @@ Order: WP1 and WP3 first (independent), then WP2 and WP4, WP5, WP6a, WP6b, WP7; 
   wide view off) can't be checked in the direct build: it has no screen targets there ("pica: 84 KB of VRAM free (no
   screen targets)", the shots black; not caused by the page: its texture is in linear memory). The game file's code is
   unchanged without N3DS_DIRECT (`host_objcmp`, 32 and 64 bits).
+- 2026-11-06: R6.4, three of the shortcuts of 2026-11-05 done. On the page Y goes to the pockets, X to the map, Select
+  to the chat (as the tabs' menus' `handleTabSwitch`: B 7, Y 0, X 5, Select 4; the pockets' own Y closes, the page has
+  no key of its own). L / R leave through the game's `MenuTabBar_PrevTab` / `NextTab` (`n3ds_menu_step` returns
+  `N3DS_MENU_PREV` / `NEXT`), so they set its pause (`sTabSwitchCooldown`) as on the other tabs; a touch, Y, X and
+  Select don't, as there. The forced close (`MenuCtrl_RequestForceClose`) is counted down while the page is the tab
+  (`MenuCtrl_TickForceClose` in `execMain`) and, when due, closes the menu from the page in place (the page slides out
+  first, then the menu closes as on B). Checked (Azahar, hidden, the `menu` script, temporary log lines and a
+  temporary `ACWW_OPT_AT` entry calling `MenuCtrl_RequestForceClose` at 7300, both removed again): L 4600 page, Y 4800
+  pockets, L page, X 5200 map, R R page, Select 5800 chat, R R R page, R 6600 pockets, L page, L 7000 friends, R page,
+  each in the shots; after R the page has slid out at 6609 and the pockets slide in from 6632 (about 8 game frames
+  of pause, as the game's own tab change measured 2026-11-05); the forced close took 54 game frames (`sForceCloseDelay`
+  0x37) and the menu was closed at 7519. The game file's code unchanged without N3DS_DIRECT (`host_objcmp`).

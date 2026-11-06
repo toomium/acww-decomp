@@ -234,8 +234,8 @@ static int any_changed(void) {
     return 0;
 }
 static int sRequest = -1;
-// the page leaves for tab t (7 closes the pause menu): the game selects it at once and takes the page as closed once it
-// has slid out (n3ds_menu_step); the changed options go into acww.cfg
+// the page leaves for tab t (7 closes the pause menu, N3DS_MENU_PREV / NEXT: L / R): the game selects it at once and
+// takes the page as closed once it has slid out (n3ds_menu_step); the changed options go into acww.cfg
 static void page_leave(int t) {
     if (any_changed()) opt_save();
     sPhase = PAGE_OUT, sStep = 0, sRequest = t;
@@ -243,7 +243,7 @@ static void page_leave(int t) {
 
 // --- input: while the page is there (sliding or in place) the game gets no keys and no touch; what the page took stays
 // hidden from the game until it is released. The way into the page is the game's (L / R, its button: MenuTabBar).
-enum { K_A = 1, K_B = 2, K_RIGHT = 16, K_LEFT = 32, K_UP = 64, K_DOWN = 128, K_R = 256, K_L = 512 };
+enum { K_A = 1, K_B = 2, K_SELECT = 4, K_RIGHT = 16, K_LEFT = 32, K_UP = 64, K_DOWN = 128, K_R = 256, K_L = 512, K_X = 1024, K_Y = 2048 };
 enum { BTN_X = 26, BTN_W = 24 };
 
 static int row_y(int i) {  // the top of option i's row in the page's picture (as draw_picture lays it out)
@@ -270,10 +270,14 @@ uint32_t opt_keys(uint32_t pressed) {
         if ((now & K_UP) && sCursor > 0) sCursor--, sSound = 0x3b;
         if ((now & K_DOWN) && sCursor < NOPT - 1) sCursor++, sSound = 0x3b;
         if (now & (K_A | K_LEFT | K_RIGHT)) page_toggle(sCursor);
-        // as the tabs' menus: B closes the pause menu, L / R go on to the friends / the pockets
+        // as the tabs' menus: B closes the pause menu, L / R go on to the friends / the pockets, Y to the pockets, X the
+        // map, Select the chat (their handleTabSwitch)
         if (now & K_B) page_leave(7);
-        else if (now & K_L) page_leave(6);
-        else if (now & K_R) page_leave(0);
+        else if (now & K_L) page_leave(N3DS_MENU_PREV);
+        else if (now & K_R) page_leave(N3DS_MENU_NEXT);
+        else if (now & K_Y) page_leave(0);
+        else if (now & K_X) page_leave(5);
+        else if (now & K_SELECT) page_leave(4);
     }
     if (sPhase != PAGE_NONE) hide |= pressed;
     return pressed & ~hide;
@@ -360,7 +364,8 @@ void n3ds_menu_font(const void *header, const void *glyphs, const void *bitmaps)
     sMenu.fontHeader = header, sMenu.fontGlyphs = glyphs, sMenu.fontBitmaps = bitmaps;
 }
 void n3ds_menu_page(void) { sPhase = PAGE_IN, sStep = 4; }
-int n3ds_menu_step(int *se, int *closed) {
+int n3ds_menu_step(int forced, int *se, int *closed) {
+    if (forced && sPhase == PAGE_OPEN) page_leave(7);  // (the tabs' menus too only where they take input)
     int t = sRequest;
     sRequest = -1;
     *closed = 0;

@@ -217,9 +217,17 @@ BOOL MenuTabBar::execMain() {
 #ifdef N3DS_DIRECT
     N3DS_MENU_STATE();
     {
-        // leaving the options page as a tab's menu does: selectTab at once, onTabMenuClosed once it has slid out
-        int se, closed, tab = n3ds_menu_step(&se, &closed);
+        // leaving the options page as a tab's menu does: selectTab at once, onTabMenuClosed once it has slid out; the
+        // forced close counted down as the tabs' menus do (their handleTabSwitch)
+        int se, closed, tab, forced = 0;
+        if (curTab == N3DS_OPT_TAB) {
+            MenuCtrl_TickForceClose();
+            forced = MenuCtrl_IsForceCloseDue();
+        }
+        tab = n3ds_menu_step(forced, &se, &closed);
         if (se >= 0) Snd_PlaySe(se);
+        if (tab == N3DS_MENU_PREV) tab = MenuTabBar_PrevTab(N3DS_OPT_TAB);
+        if (tab == N3DS_MENU_NEXT) tab = MenuTabBar_NextTab(N3DS_OPT_TAB);
         if (tab >= 0) selectTab((u32)tab);
         if (closed) onTabMenuClosed();
     }

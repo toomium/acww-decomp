@@ -34,9 +34,13 @@ extern int gN3dsTalkBgShown;
 void n3ds_menu_state(int open, int visible, int slideY, int curTab);
 void n3ds_menu_font(const void *header, const void *glyphs, const void *bitmaps);  // gFontA's three pointers
 void n3ds_menu_page(void);  // the options tab's turn to open (the tab before it gone): the page slides in
-// once a game frame, from execMain: the page's animation; returns the tab the page leaves for (-1 none: 7 closes the
-// menu), *closed 1 once it has slid out (as a tab's menu deleted), *se a sound to play (-1 none: 0x3b cursor, 0x27 button)
-int n3ds_menu_step(int *se, int *closed);
+// once a game frame, from execMain: the page's animation; forced: the game's forced close is due (MenuCtrl_IsForceCloseDue,
+// ticked while the page is the tab); returns the tab the page leaves for (-1 none: 7 closes the menu; N3DS_MENU_PREV /
+// N3DS_MENU_NEXT: L / R, the game's MenuTabBar_PrevTab / NextTab give the tab and their pause), *closed 1 once it has
+// slid out (as a tab's menu deleted), *se a sound to play (-1 none: 0x3b cursor, 0x27 button)
+#define N3DS_MENU_PREV (-2)
+#define N3DS_MENU_NEXT (-3)
+int n3ds_menu_step(int forced, int *se, int *closed);
 // the options page's button drawn with the tab bar (MenuTabBar::onDraw) at line y of the bottom screen: as an OBJ, shown
 // with the OAM the game loads next (gpu2d_obj_anchors), cut at the DS's picture as the tabs
 void gpu2d_opt_button(int y);
