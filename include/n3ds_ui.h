@@ -37,6 +37,9 @@ void n3ds_menu_page(void);  // the options tab's turn to open (the tab before it
 // once a game frame, from execMain: the page's animation; returns the tab the page leaves for (-1 none: 7 closes the
 // menu), *closed 1 once it has slid out (as a tab's menu deleted), *se a sound to play (-1 none: 0x3b cursor, 0x27 button)
 int n3ds_menu_step(int *se, int *closed);
+// the options page's button drawn with the tab bar (MenuTabBar::onDraw) at line y of the bottom screen: as an OBJ, shown
+// with the OAM the game loads next (gpu2d_obj_anchors), cut at the DS's picture as the tabs
+void gpu2d_opt_button(int y);
 
 #ifdef __cplusplus
 }

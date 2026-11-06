@@ -74,8 +74,10 @@ static int sNV;
 
 static Gpu2dLayers sLayers;            // its pixel buffers in linear memory (the GPU's transfers read them)
 static C3D_Tex sBg[2][4], sObj[2], sRegion[2], s3d;
+#ifdef N3DS_DIRECT
 static C3D_Tex sOpt;                   // the options page's picture (gpu2d_options), and its linear copy for the upload
 static uint32_t *sOptStage, sOptSerial;
+#endif
 static C3D_Tex sSprites;               // the OBJs as sprites (Gpu2dLayers.sprite: the direct build), their atlas
 // The direct build: each engine's backdrop colours, a texel row per line (8 x 256, the lines after the last as the
 // last), so that the backdrop is a quad per group and the sky's colour changing every line (its H-blank) doesn't cut
@@ -1379,25 +1381,29 @@ static int top_unchanged(int e, u32 used, u32 cpuBg) {
     return same;
 }
 
-// The direct build: the options page and the pause menu's button (gpu2d_options) over the DS's picture at (x0, y0) on a
-// screen sw wide, in the DS's pixels as screen_compose's
-static void options_page(float x0, float y0, float sw) {
+// The direct build: the options page and the pause menu's button (gpu2d_options) over the DS's picture at (x0, y0), dw
+// wide (W, or 320 scaled), on a screen sw wide, in the DS's pixels
+static void options_page(float x0, float y0, float sw, float dw) {
 #ifdef N3DS_DIRECT
     if (!sOptSerial || (sLayers.optPageY >= H && sLayers.optBtnY == GPU2D_NO_BTN)) return;
     C3D_Mtx m;
-    Mtx_OrthoTilt(&m, -x0, sw - x0, 240.0f - y0, -y0, 0.0f, 1.0f, true);
+    float k = dw / W;
+    Mtx_OrthoTilt(&m, -x0 / k, (sw - x0) / k, (240.0f - y0) / k, -y0 / k, 0.0f, 1.0f, true);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, sUProjection, &m);
     source(&sOpt);
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ZERO);
     sTag = ST_SCREEN;
     begin();
     rect(0, 17.0f + (float)sLayers.optPageY, W, H, 0, 1, 17, TEX, 0);  // (cut at the DS's bottom edge while it slides)
-    if (sLayers.optBtnY != GPU2D_NO_BTN) rect(26, (float)sLayers.optBtnY, 50, (float)sLayers.optBtnY + 16, 0, 24.0f / TEX, 0, TEX, 0);
+    if (sLayers.optBtnY != GPU2D_NO_BTN) {  // (cut at the DS's top edge as the tabs' OBJs while the tab bar slides)
+        float by = (float)sLayers.optBtnY, top = by < 0 ? 0 : by;
+        rect(26, top, 50, by + 16, 0, 24.0f / TEX, top - by, TEX, 0);
+    }
     end();
     projection(sw, 240.0f, 1);
     opaque();
 #else
-    (void)x0, (void)y0, (void)sw;
+    (void)x0, (void)y0, (void)sw, (void)dw;
 #endif
 }
 
@@ -1687,7 +1693,7 @@ static void frame_job(void *arg) {
             C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
             C3D_AlphaTest(false, GPU_ALWAYS, 0);
             opaque();
-            if (s == 1) options_page(x0, y0, sw);
+            if (s == 1) options_page(x0, y0, sw, dw);
             iris(sw);
             if (s == 0) show_fps();
             continue;
@@ -1703,6 +1709,7 @@ static void frame_job(void *arg) {
         const float uv[4][2] = {{0, 1}, {pw / size, 1}, {pw / size, 1 - ph / size}, {0, 1 - ph / size}};
         quad(xy, uv, 0);
         end();
+        if (s == 1) options_page(x0, y0, sw, dw);  // (the wide view off: the page there too, to switch it on again)
         iris(sw);
         if (s == 0) show_fps();
     }

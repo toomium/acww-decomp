@@ -141,6 +141,9 @@ BOOL MenuTabBar::onDraw() {
         Oam_DrawObj(1, &sTabBarOamCells[j * 2], 0x80, slideY + 0x50, -1, 2, NULL);
         Oam_DrawObj(1, &sTabBarOamCells[(j + 1) * 2], 0x80, slideY + 0x50, -1, 2, NULL);
     }
+#ifdef N3DS_DIRECT
+    gpu2d_opt_button(slideY - 15);  // (the tabs' tops)
+#endif
     return TRUE;
 }
 

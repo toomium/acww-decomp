@@ -1201,3 +1201,19 @@ Order: WP1 and WP3 first (independent), then WP2 and WP4, WP5, WP6a, WP6b, WP7; 
   sounds listened to, the hand as the cursor, and (the user, 2026-11-05, for the next session) while the pause menu
   slides in and out the options button doesn't vanish at the DS picture's old edge as the other tabs do (the cause
   **unverified**: the host draws it over the whole wide screen, not cut at the DS's picture as the tabs' OBJs are).
+- 2026-11-06: R6.4, the user's point of 2026-11-05 (the options button not cut at the DS picture's top edge while the tab
+  bar slides) fixed. Reproduced first (Azahar, hidden, the `menu` script on a fresh `save` result from the PC build, B
+  at 4800, `ACWW_PICA_SHOT` every frame 4435-4475 and 4798-4830; the shots are the whole 320x240 bottom screen): the
+  button stood whole in the margin above the DS's picture while the tabs showed one line. Two causes: pica_display.c's
+  `options_page` drew the button's 16 lines wherever they fell (now cut at the DS's line 0, the texture row moved by as
+  much), and its position came from `execMain` (`n3ds_menu_state`), a game frame ahead of the tabs' OBJs, whose OAM the
+  game loads at its next V-blank (`Gfx_VBlankFlush` -> `Oam_LoadBuffers`, once a game frame). Now `MenuTabBar::onDraw`
+  gives it with the tabs' OBJs (`gpu2d_opt_button(slideY - 15)`, n3ds_ui.h) and gpu2d.c takes it with the next OAM
+  (`gpu2d_obj_anchors`, engine 1), for that OAM only, as an OBJ. Checked: in every distinct frame of the slide in and of
+  B's slide out the button shows as many lines as the pockets' tab and vanishes with the tabs. **Found:** with the wide
+  view off (`ACWW_WIDE=0`) the page and the button weren't drawn at all (`options_page` only in the `screen_compose`
+  path, which needs the wide view's stencil), so "Wide screen" couldn't be switched on again from the page: now also in
+  the other path, in the DS picture's scale; checked the same way with `ACWW_WIDE=0`. `ACWW_3DS_SCALE=1.25` (needs the
+  wide view off) can't be checked in the direct build: it has no screen targets there ("pica: 84 KB of VRAM free (no
+  screen targets)", the shots black; not caused by the page: its texture is in linear memory). The game file's code is
+  unchanged without N3DS_DIRECT (`host_objcmp`, 32 and 64 bits).

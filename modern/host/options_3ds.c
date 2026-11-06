@@ -154,8 +154,7 @@ static void text_test(void) {
 
 // --- the page and the pause menu's button, one picture (gpu2d_options): the button at (0, 0), 24x16, the page in
 // lines 17-191
-void gpu2d_options(const uint32_t *pic, uint32_t serial, int pageY, int btnY);  // gpu2d.c
-#define NO_BTN (-999)
+void gpu2d_options(const uint32_t *pic, uint32_t serial, int pageY);  // gpu2d.c
 // The page is the pause menu's tab N3DS_OPT_TAB (include/n3ds_ui.h). It slides in from the bottom and out again as the
 // tabs' menus do (MenuSlide, measured in the PC build: in 192 * p * p over p = 3/4, 2/4, 1/4, 0, a step a game frame;
 // out 64 more a step, 3 steps), and takes input only while it is in place.
@@ -316,8 +315,7 @@ static void page_frame(void) {
         sig = now;
         draw_picture(sPic[++sSerial & 1]);
     }
-    int shown = sMenu.open && sMenu.visible;
-    gpu2d_options(sPic[sSerial & 1], sSerial, shown ? page_y() : PH, shown ? sMenu.slideY - 15 : NO_BTN);
+    gpu2d_options(sPic[sSerial & 1], sSerial, sMenu.open && sMenu.visible ? page_y() : PH);
 }
 
 // ACWW_OPT_AT="frame:NAME=value;...": at those frames opt_set + opt_save as the page does
